@@ -1,0 +1,3 @@
+# Ignore Python cache files and log files
+bot_execution.log
+__pycache__
