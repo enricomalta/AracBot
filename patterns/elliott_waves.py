@@ -13,9 +13,12 @@ class ElliottWavePatterns(BasePatternDetector):
     
     def detect(self) -> List[Dict]:
         """Detecta padrões de Elliott Waves"""
-        signals = []
-        signals.extend(self.detect_impulse_waves())
-        return signals
+        # Desabilitado temporariamente - winning rate muito baixo (42%)
+        # Requer mais pesquisa e validação para melhorar precisão
+        return []
+        # signals = []
+        # signals.extend(self.detect_impulse_waves())
+        # return signals
     
     def detect_impulse_waves(self, window: int = 50) -> List[Dict]:
         """Detecta ondas impulsivas de Elliott"""

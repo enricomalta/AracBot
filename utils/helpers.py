@@ -11,9 +11,10 @@ def setup_logging(level=logging.INFO):
         level=level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('bot_execution.log'),
+            logging.FileHandler('bot_execution.log', mode='a'),
             logging.StreamHandler()
-        ]
+        ],
+        force=True  # Força reconfiguração
     )
 
 def calculate_volatility(df: pd.DataFrame, window: int = 20) -> float:

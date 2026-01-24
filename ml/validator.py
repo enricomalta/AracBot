@@ -21,31 +21,48 @@ class PatternMLValidator:
         self.feature_importance = {}
         
     def create_ml_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Cria features técnicas para o modelo ML"""
+        """Cria features técnicas para o modelo ML (sem look-ahead bias)"""
         features_df = df.copy()
         
         # Indicadores técnicos
         features_df['rsi'] = talib.RSI(df['close'], timeperiod=14)
+        features_df['rsi_21'] = talib.RSI(df['close'], timeperiod=21)
         features_df['macd'], features_df['macd_signal'], features_df['macd_hist'] = talib.MACD(df['close'])
         features_df['bb_upper'], features_df['bb_middle'], features_df['bb_lower'] = talib.BBANDS(df['close'], timeperiod=20)
         features_df['atr'] = talib.ATR(df['high'], df['low'], df['close'], timeperiod=14)
         features_df['adx'] = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
         features_df['obv'] = talib.OBV(df['close'], df['volume'])
         
-        # Features de momentum
+        # Features de momentum (passado)
         features_df['momentum_5'] = df['close'].pct_change(5)
         features_df['momentum_10'] = df['close'].pct_change(10)
+        features_df['momentum_20'] = df['close'].pct_change(20)
         features_df['volatility_10'] = df['close'].pct_change().rolling(10).std()
+        features_df['volatility_20'] = df['close'].pct_change().rolling(20).std()
         
         # Features de volume
         features_df['volume_sma'] = df['volume'].rolling(20).mean()
         features_df['volume_ratio'] = df['volume'] / features_df['volume_sma']
+        features_df['volume_change'] = df['volume'].pct_change(5)
         
         # Features de preço
         features_df['high_low_ratio'] = df['high'] / df['low']
         features_df['close_open_ratio'] = df['close'] / df['open']
+        features_df['price_to_sma_20'] = df['close'] / df['close'].rolling(20).mean()
+        features_df['price_to_sma_50'] = df['close'] / df['close'].rolling(50).mean()
         
-        # Retornos futuros (target)
+        # Trend features
+        features_df['sma_20'] = df['close'].rolling(20).mean()
+        features_df['sma_50'] = df['close'].rolling(50).mean()
+        features_df['trend_strength'] = (features_df['sma_20'] - features_df['sma_50']) / features_df['sma_50']
+        
+        # BB position
+        features_df['bb_position'] = (df['close'] - features_df['bb_lower']) / (features_df['bb_upper'] - features_df['bb_lower'])
+        
+        # Stochastic
+        features_df['slowk'], features_df['slowd'] = talib.STOCH(df['high'], df['low'], df['close'])
+        
+        # Target: retorno futuro real (para treino) - shift negativo
         features_df['future_return_1h'] = df['close'].shift(-6) / df['close'] - 1
         features_df['future_return_4h'] = df['close'].shift(-24) / df['close'] - 1
         
@@ -129,7 +146,12 @@ class PatternMLValidator:
             X_scaled = self.scalers[pattern_type].transform(X_current)
             
             ml_confidence = self.models[pattern_type].predict_proba(X_scaled)[0, 1]
-            combined_confidence = (pattern_confidence * 0.6 + ml_confidence * 0.4)
+            # Peso 50/50 entre pattern e ML
+            combined_confidence = (pattern_confidence * 0.5 + ml_confidence * 0.5)
+            
+            # Se ML discorda fortemente (< 0.4), reduzir ainda mais
+            if ml_confidence < 0.4:
+                combined_confidence *= 0.8
             
             return combined_confidence
             

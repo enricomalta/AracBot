@@ -1,7 +1,7 @@
 # data/database.py
 import sqlite3
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from config.settings import settings
 
@@ -145,23 +145,123 @@ class DatabaseManager:
         """Salva dados de preço no histórico"""
         conn = self.get_connection()
         
-        # Verificar dados existentes
-        existing_query = """
-            SELECT timestamp FROM price_history 
-            WHERE symbol = ? AND timeframe = ? AND timestamp >= ?
+        # Para cache, vamos sobrescrever dados existentes para o período
+        # Primeiro, deletar dados existentes no período
+        min_ts = df['timestamp'].min()
+        max_ts = df['timestamp'].max()
+        if isinstance(min_ts, pd.Timestamp):
+            min_ts = min_ts.strftime('%Y-%m-%d %H:%M:%S')
+        if isinstance(max_ts, pd.Timestamp):
+            max_ts = max_ts.strftime('%Y-%m-%d %H:%M:%S')
+        
+        delete_query = """
+            DELETE FROM price_history 
+            WHERE symbol = ? AND timeframe = ? AND timestamp >= ? AND timestamp <= ?
         """
-        existing_timestamps = pd.read_sql(
-            existing_query, conn, 
-            params=[symbol, timeframe, df['timestamp'].min()]
-        )['timestamp'].values
+        conn.execute(delete_query, [symbol, timeframe, min_ts, max_ts])
         
-        # Filtrar dados novos
-        new_data = df[~df['timestamp'].isin(existing_timestamps)].copy()
-        new_data['symbol'] = symbol
-        new_data['timeframe'] = timeframe
+        # Inserir novos dados
+        df_copy = df.copy()
+        df_copy['symbol'] = symbol
+        df_copy['timeframe'] = timeframe
+        df_copy.to_sql('price_history', conn, if_exists='append', index=False)
         
-        if not new_data.empty:
-            new_data.to_sql('price_history', conn, if_exists='append', index=False)
-            logger.info(f"Saved {len(new_data)} new price records for {symbol} {timeframe}")
+        conn.commit()
+        logger.info(f"Saved {len(df)} new price records for {symbol} {timeframe}")
         
         conn.close()
+    
+    def get_price_data(self, symbol: str, timeframe: str, 
+                      start_date: datetime = None, end_date: datetime = None) -> pd.DataFrame:
+        """Recupera dados de preço do cache para o período especificado"""
+        conn = self.get_connection()
+        
+        query = """
+            SELECT timestamp, open, high, low, close, volume 
+            FROM price_history 
+            WHERE symbol = ? AND timeframe = ?
+        """
+        params = [symbol, timeframe]
+        
+        if start_date:
+            query += " AND timestamp >= ?"
+            params.append(start_date.strftime('%Y-%m-%d %H:%M:%S'))
+        if end_date:
+            query += " AND timestamp <= ?"
+            params.append(end_date.strftime('%Y-%m-%d %H:%M:%S'))
+        
+        query += " ORDER BY timestamp"
+        
+        df = pd.read_sql(query, conn, params=params)
+        conn.close()
+        
+        if not df.empty:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            logger.info(f"Retrieved {len(df)} cached price records for {symbol} {timeframe}")
+        
+        return df
+    
+    def save_signal_for_analysis(self, signal_data: dict):
+        """Salva sinal detectado para análise e retreinamento ML"""
+        conn = self.get_connection()
+        
+        # Tabela para sinais coletados
+        conn.execute('''CREATE TABLE IF NOT EXISTS collected_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME,
+            pattern TEXT,
+            confidence REAL,
+            signal TEXT,
+            price REAL,
+            market_data TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )''')
+        
+        conn.execute('''INSERT INTO collected_signals 
+            (timestamp, pattern, confidence, signal, price, market_data)
+            VALUES (?, ?, ?, ?, ?, ?)''', (
+            signal_data['timestamp'],
+            signal_data['pattern'],
+            signal_data['confidence'],
+            signal_data['signal'],
+            signal_data['price'],
+            str(signal_data['market_data'])  # Salvar como string JSON
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        # logger.info(f"Signal saved for analysis: {signal_data['pattern']} ({signal_data['confidence']:.2f})")
+    
+    def get_collected_signals(self) -> pd.DataFrame:
+        """Retorna sinais coletados para análise"""
+        conn = self.get_connection()
+        df = pd.read_sql("SELECT * FROM collected_signals ORDER BY timestamp", conn)
+        conn.close()
+        return df
+    
+    def save_trade_result(self, trade_data: dict):
+        """Salva resultado de trade executado"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO patterns_detected 
+            (timestamp, pattern_name, signal_type, confidence, price_detection, 
+             position_size, result, profit_loss, exit_reason, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'closed')
+        ''', (
+            trade_data['timestamp'],
+            trade_data['pattern'],
+            trade_data['signal_type'],
+            trade_data.get('confidence', 0),
+            trade_data['entry_price'],
+            trade_data['position_size'],
+            trade_data['result'],
+            trade_data['profit'],
+            trade_data.get('exit_reason', 'manual'),
+        ))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Trade result saved: {trade_data['pattern']} {trade_data['result']} ${trade_data['profit']:.2f}")

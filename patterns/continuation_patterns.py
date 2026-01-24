@@ -18,29 +18,83 @@ class ContinuationPatterns(BasePatternDetector):
         signals.extend(self.detect_flags_pennants())
         return signals
     
-    def detect_triangles(self, window: int = 20) -> List[Dict]:
-        """Detecta triângulos simétricos, ascendentes e descendentes"""
+    def detect_triangles(self, window: int = 20) -> List[Dict]:  # Aumentado para 20
+        """Detecta triângulos simétricos com validação de breakout e volume"""
         signals = []
         
-        for i in range(window, len(self.df)):
-            window_high = self.high[i-window:i]
-            window_low = self.low[i-window:i]
+        for i in range(window, len(self.df)-3):
+            if i < window:
+                continue
             
-            # Calcular inclinações
-            high_slope = self._calculate_slope(window_high)
-            low_slope = self._calculate_slope(window_low)
+            # Calcular trendlines de suporte e resistência
+            highs = self.high[i-window:i]
+            lows = self.low[i-window:i]
+            volumes = self.volume[i-window:i]
             
-            # Classificar triângulo
-            triangle_type, confidence = self._classify_triangle(high_slope, low_slope)
+            # Verificar convergência
+            recent_range = max(highs) - min(lows)
+            prev_range = max(self.high[i-window*2:i-window]) - min(self.low[i-window*2:i-window]) if i >= window*2 else recent_range
             
-            if triangle_type and confidence > 0.6:
-                signals.append({
-                    'pattern': f'triangle_{triangle_type}',
-                    'signal': 'continuation',
-                    'confidence': confidence,
-                    'index': i,
-                    'price': self.close[i]
-                })
+            if prev_range == 0:
+                continue
+            
+            # Convergência: range atual menor que anterior
+            convergence_ratio = recent_range / prev_range
+            if convergence_ratio > 0.7:  # Não está convergindo suficiente
+                continue
+            
+            # Validação 1: Volume deve diminuir durante consolidação
+            recent_vol = np.mean(volumes[-5:])
+            prev_vol = np.mean(volumes[:-5]) if len(volumes) > 5 else recent_vol
+            
+            if prev_vol == 0 or recent_vol > prev_vol * 1.1:
+                continue  # Volume não está diminuindo
+            
+            # Validação 2: Verificar se houve breakout
+            current_price = self.close[i]
+            upper_bound = max(highs[-5:])
+            lower_bound = min(lows[-5:])
+            
+            # Aguardar breakout confirmado
+            if i < len(self.close) - 1:
+                next_price = self.close[i+1] if i+1 < len(self.close) else current_price
+                
+                # Breakout para cima
+                if next_price > upper_bound * 1.005:  # 0.5% acima
+                    # Confirmar com volume
+                    breakout_volume = self.volume[i+1] if i+1 < len(self.volume) else recent_vol
+                    if breakout_volume > prev_vol * 1.2:  # Volume 20% maior
+                        confidence = 0.80
+                        signal = 'buy'
+                    else:
+                        confidence = 0.70
+                        signal = 'buy'
+                    
+                    signals.append({
+                        'pattern': 'triangle_simetrico',
+                        'signal': signal,
+                        'confidence': confidence,
+                        'index': i,
+                        'price': current_price
+                    })
+                
+                # Breakout para baixo
+                elif next_price < lower_bound * 0.995:  # 0.5% abaixo
+                    breakout_volume = self.volume[i+1] if i+1 < len(self.volume) else recent_vol
+                    if breakout_volume > prev_vol * 1.2:
+                        confidence = 0.80
+                        signal = 'sell'
+                    else:
+                        confidence = 0.70
+                        signal = 'sell'
+                    
+                    signals.append({
+                        'pattern': 'triangle_simetrico',
+                        'signal': signal,
+                        'confidence': confidence,
+                        'index': i,
+                        'price': current_price
+                    })
         
         return signals
     
@@ -102,12 +156,29 @@ class ContinuationPatterns(BasePatternDetector):
         return {'is_strong': is_strong, 'direction': direction}
     
     def _check_consolidation(self, index: int, window: int) -> Dict:
-        """Verifica período de consolidação"""
+        """Verifica período de consolidação com volume"""
         consolidation_high = max(self.high[index-window:index])
         consolidation_low = min(self.low[index-window:index])
         consolidation_range = (consolidation_high - consolidation_low) / consolidation_low
         
-        is_tight = consolidation_range < 0.015  # 1.5% de range
-        confidence = 0.7 if is_tight else 0.0
+        if consolidation_range >= 0.015:  # Range muito grande
+            return {'is_tight': False, 'confidence': 0.0}
         
-        return {'is_tight': is_tight, 'confidence': confidence}
+        # Verificar volume: deve diminuir durante consolidação
+        recent_vol = np.mean(self.volume[index-5:index])
+        prev_vol = np.mean(self.volume[index-15:index-5]) if index >= 15 else recent_vol
+        
+        if prev_vol == 0 or recent_vol > prev_vol * 0.9:
+            return {'is_tight': False, 'confidence': 0.0}
+        
+        # Verificar breakout iminente com volume
+        if index < len(self.close) - 1:
+            next_candle_vol = self.volume[index] if index < len(self.volume) else recent_vol
+            if next_candle_vol > prev_vol * 1.3:  # Volume 30% maior indica breakout
+                confidence = 0.85
+            else:
+                confidence = 0.75
+        else:
+            confidence = 0.75
+        
+        return {'is_tight': True, 'confidence': confidence}

@@ -43,6 +43,10 @@ class Backtester:
             signals = detector.analyze_market(current_data)
             
             for signal in signals:
+                # Filtrar padrões com performance ruim
+                if signal['pattern'] == 'triangle_simetrico':
+                    continue  # Pular triangle_simetrico por enquanto
+                
                 if patterns_to_test and signal['pattern'] not in patterns_to_test:
                     continue
                 

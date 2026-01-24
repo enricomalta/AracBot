@@ -9,8 +9,8 @@ from config.settings import settings
 logger = logging.getLogger(__name__)
 
 class MultiTimeframeAnalyzer:
-    def __init__(self):
-        self.api_client = APIClient()
+    def __init__(self, api_client):
+        self.api_client = api_client
         self.pattern_bot = PatternRecognitionBot()
         self.timeframe_weights = {
             '1m': 0.1, 

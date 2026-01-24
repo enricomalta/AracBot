@@ -1,6 +1,10 @@
 # config/settings.py
 import os
 from datetime import timedelta
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class Settings:
     # Database
@@ -8,8 +12,14 @@ class Settings:
     
     # API
     BINANCE_API_URL = "https://api.binance.com/api/v3/klines"
+    BINANCE_TRADE_URL = "https://api.binance.com/api/v3"
     SYMBOL = "BTCUSDT"
     TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h']
+    
+    # API Keys (configure via environment variables)
+    API_KEY = os.getenv('BINANCE_API_KEY', '')
+    API_SECRET = os.getenv('BINANCE_API_SECRET', '')
+    USE_DEMO = os.getenv('USE_BINANCE_DEMO', 'true').lower() == 'true'  # Use demo account by default
     
     # Trading
     INITIAL_CAPITAL = 10000.0
@@ -17,8 +27,8 @@ class Settings:
     DAILY_LOSS_LIMIT = 0.02
     
     # Pattern Detection
-    MIN_CONFIDENCE = 0.6
-    ML_CONFIDENCE_WEIGHT = 0.4
+    MIN_CONFIDENCE = 0.72  # Balanceado para qualidade vs quantidade
+    ML_CONFIDENCE_WEIGHT = 0.5  # Aumentado para 50% - ML tem mais peso
     
     # Risk Management
     MAX_POSITION_SIZE = 0.1  # 10% do capital
