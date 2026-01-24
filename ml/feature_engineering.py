@@ -2,7 +2,7 @@
 import pandas as pd
 import numpy as np
 import talib
-from typing import List
+from typing import List, Dict
 
 class FeatureEngineer:
     def __init__(self):

@@ -15,6 +15,10 @@ from analysis.backtester import Backtester
 from analysis.performance import PerformanceAnalyzer
 from utils.helpers import setup_logging
 from news.news_sentiment_manager import NewsSentimentManager
+from data.market_data_collector import AdvancedMarketDataCollector
+from ml.prediction_tracker import PredictionTracker
+from ml.advanced_features import AdvancedFeatureEngineer
+from ml.feature_engineering import FeatureEngineer
 
 class AdvancedBitcoinPatternTracker:
     def __init__(self):
@@ -37,6 +41,16 @@ class AdvancedBitcoinPatternTracker:
         else:
             self.sentiment_manager = None
             self.logger.info("Sentiment analysis DISABLED (kill switch activated)")
+        
+        # ========== NOVOS COMPONENTES PARA MODO LIVE ==========
+        self.market_collector = AdvancedMarketDataCollector(self.db)
+        self.logger.info("Market data collector initialized")
+        
+        self.prediction_tracker = PredictionTracker(self.db)
+        self.logger.info("Prediction tracker initialized")
+        
+        self.feature_engineer = AdvancedFeatureEngineer(self.db)
+        self.logger.info("Advanced feature engineer initialized")
         
         # Trading state
         self.active_positions = []  # Lista de posições abertas
@@ -677,6 +691,263 @@ Average Trade Duration: {avg_duration} candles
         except Exception as e:
             self.logger.error(f"Error closing position: {str(e)}")
 
+    def run_live_with_predictions(self, collect_days: int = 30, prediction_horizon: str = '24h', 
+                                  update_interval: int = 60):
+        """Executa modo LIVE com geração de previsões estruturadas"""
+        self.logger.info(f"[LIVE] Starting LIVE MODE with Predictions")
+        self.logger.info(f"Collection days: {collect_days}")
+        self.logger.info(f"Prediction horizon: {prediction_horizon}")
+        self.logger.info(f"Update interval: {update_interval} minutes")
+        
+        # Carregar histórico inicial
+        if collect_days > 0:
+            self.logger.info(f"\n[DATA] Loading {collect_days} days of historical data...")
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=collect_days)
+            
+            historical_data = self.api_client.get_historical_data(
+                settings.SYMBOL, '1h', start_date, end_date
+            )
+            
+            if historical_data is not None and len(historical_data) > 20:
+                self.logger.info(f"[OK] Loaded {len(historical_data)} historical candles")
+                self.logger.info(f"[ML] Training ML models with historical data...")
+                self.ml_validator.train_models(historical_data)
+                self.ml_validator.save_models()
+                self.logger.info(f"[OK] ML models trained and saved")
+            else:
+                self.logger.warning("Could not load sufficient historical data")
+        
+        # Loop principal
+        cycle = 0
+        try:
+            while True:
+                cycle += 1
+                timestamp = datetime.now()
+                
+                self.logger.info(f"\n{'='*70}")
+                self.logger.info(f"Cycle #{cycle} - {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+                self.logger.info(f"{'='*70}")
+                
+                try:
+                    # ========== 1. Obter preço atual ==========
+                    current_klines = self.api_client.fetch_klines(settings.SYMBOL, '1m', limit=1)
+                    
+                    if current_klines is None or len(current_klines) == 0:
+                        self.logger.warning("Could not fetch current price, retrying in 5 minutes...")
+                        time.sleep(300)
+                        continue
+                    
+                    current_price = float(current_klines['close'].iloc[-1])
+                    self.logger.info(f"[PRICE] Current price: ${current_price:,.2f}")
+                    
+                    # ========== 2. Coletar dados avançados ==========
+                    self.logger.info(f"\n[DATA] Collecting advanced market data...")
+                    market_data = self.market_collector.save_all_market_data(settings.SYMBOL)
+                    self.logger.info(f"[OK] Collected {len(market_data['sources'])} data sources")
+                    
+                    # Extrair valores
+                    sentiment_score = 0.0
+                    oi_ratio = 1.0
+                    funding_rate = 0.0
+                    
+                    if 'open_interest' in market_data['sources'] and market_data['sources']['open_interest']:
+                        oi_ratio = market_data['sources']['open_interest'].get('oi_current', 1.0)
+                    
+                    if 'funding_rate' in market_data['sources'] and market_data['sources']['funding_rate']:
+                        funding_rate = market_data['sources']['funding_rate'].get('funding_rate', 0.0)
+                    
+                    # Sentimento
+                    if self.sentiment_manager:
+                        try:
+                            sentiment_result = self.sentiment_manager.get_current_market_sentiment(
+                                hours=24, max_news=20
+                            )
+                            sentiment_score = sentiment_result.get('score', 0.0)
+                            self.logger.info(f"[SENT] Sentiment: {sentiment_result['label']} "
+                                           f"(score: {sentiment_score:.2f})")
+                        except Exception as e:
+                            self.logger.warning(f"Could not fetch sentiment: {e}")
+                    
+                    # ========== 3. Criar features ==========
+                    self.logger.info(f"\n[FEAT] Creating technical features...")
+                    
+                    hist_data = self.api_client.fetch_klines(settings.SYMBOL, '1h', limit=100)
+                    features_dict = {}
+                    
+                    if hist_data is not None and len(hist_data) > 20:
+                        fe = FeatureEngineer()
+                        features_df = fe.create_technical_features(hist_data)
+                        
+                        if not features_df.empty:
+                            latest_row = features_df.iloc[-1]
+                            features_dict = {
+                                'rsi_14': float(latest_row.get('rsi_14', 0)),
+                                'rsi_21': float(latest_row.get('rsi_21', 0)),
+                                'macd': float(latest_row.get('macd', 0)),
+                                'macd_hist': float(latest_row.get('macd_hist', 0)),
+                                'bb_position': float(latest_row.get('bb_position', 0)),
+                                'atr': float(latest_row.get('atr', 0)),
+                                'adx': float(latest_row.get('adx', 0)),
+                                'obv': float(latest_row.get('obv', 0)),
+                                'volatility_10': float(latest_row.get('volatility_10', 0)),
+                                'volume_ratio': float(latest_row.get('volume_ratio', 0)),
+                                'returns_5': float(latest_row.get('returns_5', 0)),
+                                'returns_10': float(latest_row.get('returns_10', 0)),
+                                'sentiment_score': sentiment_score,
+                                'oi_ratio': oi_ratio,
+                                'funding_rate': funding_rate
+                            }
+                            self.logger.info(f"[OK] Created {len(features_dict)} features")
+                    
+                    # ========== 4. Gerar previsões ==========
+                    self.logger.info(f"\n[PRED] Generating predictions...\n")
+                    
+                    for horizon in [prediction_horizon]:
+                        try:
+                            prediction = self._predict_direction(current_price, features_dict, sentiment_score)
+                            
+                            if prediction and features_dict:
+                                pred_id = self.prediction_tracker.create_prediction(
+                                    timeframe=horizon,
+                                    prediction_type='direction',
+                                    predicted_direction=prediction['direction'],
+                                    target_price=prediction['target_price'],
+                                    confidence=prediction['confidence'],
+                                    model_type='ensemble',
+                                    features_dict=features_dict,
+                                    sentiment_score=sentiment_score,
+                                    oi_ratio=oi_ratio,
+                                    funding_rate=funding_rate
+                                )
+                                
+                                direction_symbol = "UP" if prediction['direction'] == 'up' else "DOWN"
+                                self.logger.info(
+                                    f"[{direction_symbol}] [{horizon:5s}] {prediction['direction'].upper():8s} -> "
+                                    f"${prediction['target_price']:,.2f} ({prediction['confidence']:.0%} conf) [ID: {pred_id}]"
+                                )
+                        
+                        except Exception as e:
+                            self.logger.error(f"Error generating prediction for {horizon}: {e}")
+                    
+                    # ========== 5. Validar previsões expiradas ==========
+                    self.logger.info(f"\n[VAL] Validating expired predictions...")
+                    
+                    pending = self.prediction_tracker.get_pending_predictions()
+                    if pending:
+                        self.logger.info(f"Found {len(pending)} predictions to validate")
+                        
+                        for pred in pending:
+                            try:
+                                actual_direction = 'up' if current_price > pred['target_price'] else 'down'
+                                error_pct = abs(current_price - pred['target_price']) / pred['target_price'] * 100 if pred['target_price'] > 0 else 0
+                                
+                                self.prediction_tracker.validate_prediction(
+                                    prediction_id=pred['id'],
+                                    actual_direction=actual_direction,
+                                    actual_price=current_price,
+                                    error_percent=error_pct
+                                )
+                            except Exception as e:
+                                self.logger.error(f"Error validating prediction #{pred['id']}: {e}")
+                    
+                    # ========== 6. Relatório diário ==========
+                    if cycle % 24 == 0:
+                        self.logger.info(f"\n{'='*70}")
+                        self.logger.info(f"[REPORT] DAILY PREDICTION REPORT")
+                        self.logger.info(f"{'='*70}")
+                        try:
+                            self.prediction_tracker.print_accuracy_report()
+                        except Exception as e:
+                            self.logger.error(f"Error printing report: {e}")
+                    
+                    # ========== Aguardar próximo ciclo ==========
+                    self.logger.info(f"\n[WAIT] Next update in {update_interval} minutes...")
+                    time.sleep(update_interval * 60)
+                    
+                except KeyboardInterrupt:
+                    self.logger.info("\n[STOP] Live mode interrupted by user")
+                    break
+                except Exception as e:
+                    self.logger.error(f"Error in cycle: {e}", exc_info=True)
+                    self.logger.info("Retrying in 5 minutes...")
+                    time.sleep(300)
+        
+        except KeyboardInterrupt:
+            self.logger.info("\n[STOP] Live mode stopped")
+        except Exception as e:
+            self.logger.error(f"Fatal error in live mode: {e}", exc_info=True)
+    
+    def _predict_direction(self, current_price: float, features: dict, sentiment: float) -> dict:
+        """Prediz direção baseada em padrões e ML"""
+        try:
+            direction = 'sideways'
+            confidence = 0.5
+            target_price = current_price
+            
+            # Extrat features
+            rsi = features.get('rsi_14', 50)
+            macd_hist = features.get('macd_hist', 0)
+            bb_pos = features.get('bb_position', 0.5)
+            
+            signals = []
+            
+            # RSI signal
+            if rsi < 30:
+                signals.append(('up', 0.7))
+            elif rsi > 70:
+                signals.append(('down', 0.7))
+            
+            # MACD signal
+            if macd_hist > 0:
+                signals.append(('up', 0.6))
+            elif macd_hist < 0:
+                signals.append(('down', 0.6))
+            
+            # Bollinger Bands signal
+            if bb_pos < 0.2:
+                signals.append(('up', 0.5))
+            elif bb_pos > 0.8:
+                signals.append(('down', 0.5))
+            
+            # Sentiment signal
+            if sentiment > 0.3:
+                signals.append(('up', 0.5))
+            elif sentiment < -0.3:
+                signals.append(('down', 0.5))
+            
+            # Aggregate signals
+            if signals:
+                up_signals = sum(conf for d, conf in signals if d == 'up')
+                down_signals = sum(conf for d, conf in signals if d == 'down')
+                
+                if up_signals > down_signals:
+                    direction = 'up'
+                    confidence = min(up_signals / len(signals), 0.95)
+                    target_price = current_price * 1.01
+                elif down_signals > up_signals:
+                    direction = 'down'
+                    confidence = min(down_signals / len(signals), 0.95)
+                    target_price = current_price * 0.99
+                else:
+                    direction = 'sideways'
+                    confidence = 0.5
+                    target_price = current_price
+            
+            return {
+                'direction': direction,
+                'target_price': target_price,
+                'confidence': max(confidence, 0.5)
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error in prediction: {e}")
+            return {
+                'direction': 'sideways',
+                'target_price': current_price,
+                'confidence': 0.5
+            }
+
 def main():
     parser = argparse.ArgumentParser(description='Advanced Bitcoin Pattern Tracker')
     parser.add_argument('--mode', choices=['live', 'backtest', 'report', 'paper', 'retrain'], 
@@ -690,13 +961,27 @@ def main():
     parser.add_argument('--end-date', type=str,
                        help='End date for backtest (YYYY-MM-DD HH:MM:SS)')
     
+    # ========== NOVOS ARGUMENTOS PARA MODO LIVE COM PREVISÕES ==========
+    parser.add_argument('--collect-days', type=int, default=30,
+                       help='Days of historical data to collect (default: 30)')
+    parser.add_argument('--prediction-horizon', type=str, default='24h',
+                       choices=['1h', '4h', '24h'],
+                       help='Primary prediction horizon (default: 24h)')
+    parser.add_argument('--update-interval', type=int, default=60,
+                       help='Update interval in minutes (default: 60)')
+    
     args = parser.parse_args()
     
     tracker = AdvancedBitcoinPatternTracker()
     
     try:
         if args.mode == 'live':
-            tracker.run_live_monitoring(args.duration)
+            # Novo modo: Live com previsões
+            tracker.run_live_with_predictions(
+                collect_days=args.collect_days,
+                prediction_horizon=args.prediction_horizon,
+                update_interval=args.update_interval
+            )
         elif args.mode == 'backtest':
             tracker.run_backtest(args.backtest_days, args.start_date, args.end_date)
         elif args.mode == 'report':

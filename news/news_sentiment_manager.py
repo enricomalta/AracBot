@@ -209,18 +209,28 @@ class NewsSentimentManager:
                 'neutral_count': sentiment.get('neutral_count', 0)
             })
             
-            # Salvar notícias individuais (opcional, limitar a top 10)
+            # Salvar notícias individuais (com deduplicação no BD)
+            articles_saved = 0
             for news in news_list[:10]:
-                self.db.save_news_article({
+                url = news.get('url', '')
+                title = news.get('title', '')
+                
+                # Tentar salvar (com INSERT OR IGNORE)
+                was_saved = self.db.save_news_article({
                     'timestamp': news.get('published', datetime.now()),
-                    'title': news.get('title', ''),
+                    'title': title,
                     'source': news.get('source', ''),
                     'sentiment_score': news.get('sentiment', {}).get('score', 0.0),
                     'sentiment_label': news.get('sentiment', {}).get('label', 'neutral'),
-                    'url': news.get('url', '')
+                    'url': url
                 })
+                
+                if was_saved:
+                    articles_saved += 1
+                else:
+                    logger.debug(f"Article already exists or skipped: {title[:40]}")
             
-            logger.info(f"Saved sentiment and {len(news_list[:10])} articles to database")
+            logger.info(f"Saved sentiment and {articles_saved} new articles to database")
             
         except Exception as e:
             logger.error(f"Error saving to database: {str(e)}")

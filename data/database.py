@@ -95,14 +95,202 @@ class DatabaseManager:
                 source TEXT,
                 sentiment_score REAL,
                 sentiment_label TEXT,
-                url TEXT,
+                url TEXT UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Índice para evitar duplicatas por URL
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_news_url ON news_articles(url)
+        ''')
+        
+        # ========== NOVAS TABELAS PARA DADOS AVANÇADOS ==========
+        
+        # Open Interest
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS open_interest (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                symbol TEXT,
+                timeframe TEXT,
+                oi_current REAL,
+                oi_long REAL,
+                oi_short REAL,
+                oi_ratio REAL,
+                change_percent REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Funding Rate
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS funding_rates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                symbol TEXT,
+                funding_rate REAL,
+                mark_price REAL,
+                index_price REAL,
+                estimated_settle_time INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Liquidações
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS liquidations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                symbol TEXT,
+                side TEXT,
+                price REAL,
+                quantity REAL,
+                usd_value REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Fluxo de Exchange
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS exchange_flow (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                symbol TEXT,
+                exchange TEXT,
+                direction TEXT,
+                quantity REAL,
+                usd_value REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Volatilidade Implícita
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS implied_volatility (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                symbol TEXT,
+                iv_rank REAL,
+                iv_percentile REAL,
+                volatility REAL,
+                source TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Dominância do Mercado
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS market_dominance (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                btc_dominance REAL,
+                eth_dominance REAL,
+                altcoin_dominance REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Previsões Estruturadas
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                timeframe TEXT,
+                prediction_type TEXT,
+                predicted_direction TEXT,
+                target_price REAL,
+                confidence REAL,
+                model_type TEXT,
+                features_used TEXT,
+                sentiment_score REAL,
+                oi_ratio REAL,
+                funding_rate REAL,
+                additional_context TEXT,
+                
+                actual_direction TEXT,
+                actual_price REAL,
+                was_correct INTEGER,
+                profit_loss REAL,
+                error_percent REAL,
+                
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                resolved_at DATETIME
+            )
+        ''')
+        
+        # Eventos Históricos
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS historical_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date DATETIME,
+                event_name TEXT,
+                category TEXT,
+                description TEXT,
+                price_before REAL,
+                price_1h_after REAL,
+                price_24h_after REAL,
+                price_7d_after REAL,
+                volatility_change REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Atividade de Whales
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS whale_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                address TEXT,
+                transaction_hash TEXT,
+                direction TEXT,
+                quantity REAL,
+                usd_value REAL,
+                from_exchange INTEGER,
+                to_exchange INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Order Book Snapshot
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS order_book_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                symbol TEXT,
+                bid_price REAL,
+                bid_size REAL,
+                ask_price REAL,
+                ask_size REAL,
+                bid_ask_ratio REAL,
+                total_bid_volume REAL,
+                total_ask_volume REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Correlações Macro
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS macro_correlations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                btc_close REAL,
+                gold_close REAL,
+                sp500_close REAL,
+                dxy_close REAL,
+                vix_close REAL,
+                yield_10y REAL,
+                yield_2y REAL,
+                correlation_gold REAL,
+                correlation_sp500 REAL,
+                correlation_dxy REAL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
         conn.commit()
         conn.close()
-        logger.info("Database setup completed")
+        logger.info("Database setup completed - All tables created")
     
     def get_connection(self):
         """Retorna conexão com o banco de dados"""
@@ -322,25 +510,33 @@ class DatabaseManager:
         logger.info(f"News sentiment saved: {sentiment_data['label']} (score: {sentiment_data['score']:.2f})")
     
     def save_news_article(self, news_data: dict):
-        """Salva notícia individual com seu sentimento"""
+        """Salva notícia individual com seu sentimento (com proteção contra duplicatas)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute('''
-            INSERT INTO news_articles 
-            (timestamp, title, source, sentiment_score, sentiment_label, url)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (
-            news_data['timestamp'],
-            news_data['title'],
-            news_data['source'],
-            news_data['sentiment_score'],
-            news_data['sentiment_label'],
-            news_data.get('url', '')
-        ))
-        
-        conn.commit()
-        conn.close()
+        try:
+            # Tentar inserir com proteção UNIQUE
+            cursor.execute('''
+                INSERT OR IGNORE INTO news_articles 
+                (timestamp, title, source, sentiment_score, sentiment_label, url)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                news_data['timestamp'],
+                news_data['title'],
+                news_data['source'],
+                news_data['sentiment_score'],
+                news_data['sentiment_label'],
+                news_data.get('url', '')
+            ))
+            
+            conn.commit()
+            # Retornar se foi inserido (rows affected > 0)
+            return cursor.rowcount > 0
+        except sqlite3.IntegrityError as e:
+            logger.debug(f"Duplicate article skipped: {str(e)[:50]}")
+            return False
+        finally:
+            conn.close()
     
     def get_recent_sentiment(self, hours: int = 24) -> pd.DataFrame:
         """Retorna sentimentos recentes"""
