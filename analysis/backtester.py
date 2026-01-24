@@ -50,6 +50,11 @@ class Backtester:
                 if patterns_to_test and signal['pattern'] not in patterns_to_test:
                     continue
                 
+                # Converter 'continuation' em 'buy' ou 'sell' baseado na direção
+                if signal.get('signal') == 'continuation':
+                    direction = signal.get('direction', 'bullish')
+                    signal['signal'] = 'buy' if direction == 'bullish' else 'sell'
+                
                 # Validar com ML
                 pattern_type = 'reversal' if any(x in signal['pattern'] for x in ['top', 'shoulder']) else 'continuation'
                 ml_confidence = ml_validator.validate_pattern_with_ml(current_data, pattern_type, signal['confidence'])

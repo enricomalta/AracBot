@@ -14,6 +14,7 @@ from analysis.multi_timeframe import MultiTimeframeAnalyzer
 from analysis.backtester import Backtester
 from analysis.performance import PerformanceAnalyzer
 from utils.helpers import setup_logging
+from news.news_sentiment_manager import NewsSentimentManager
 
 class AdvancedBitcoinPatternTracker:
     def __init__(self):
@@ -28,6 +29,14 @@ class AdvancedBitcoinPatternTracker:
         self.risk_manager = RiskManager()
         self.multi_tf_analyzer = MultiTimeframeAnalyzer(api_client=self.api_client)  # Passar api_client
         self.performance_analyzer = PerformanceAnalyzer(self.db)
+        
+        # Sentiment Analysis (with kill switch)
+        if settings.SENTIMENT_ENABLED:
+            self.sentiment_manager = NewsSentimentManager(database_manager=self.db)
+            self.logger.info("Sentiment analysis ENABLED (RSS feeds: Google News, CoinDesk, Cointelegraph)")
+        else:
+            self.sentiment_manager = None
+            self.logger.info("Sentiment analysis DISABLED (kill switch activated)")
         
         # Trading state
         self.active_positions = []  # Lista de posições abertas
@@ -308,6 +317,8 @@ Average Trade Duration: {avg_duration} candles
         
         end_time = datetime.now() + timedelta(hours=duration_hours)
         last_check = datetime.now() - timedelta(minutes=10)  # Forçar primeira verificação
+        last_sentiment_check = datetime.now() - timedelta(minutes=60)  # Atualizar sentimento a cada hora
+        current_market_sentiment = None
         
         # Rastrear sinais já detectados para evitar duplicatas
         detected_signals = set()  # Usar tupla (pattern, timestamp_key) como chave
@@ -316,11 +327,27 @@ Average Trade Duration: {avg_duration} candles
         print(f"⏰ Duration: {duration_hours} hours (until {end_time.strftime('%Y-%m-%d %H:%M:%S')})")
         print(f"📊 Symbol: {settings.SYMBOL}")
         print(f"🔄 Check interval: {settings.CHECK_INTERVAL} seconds")
+        
+        # Status do sentiment analysis
+        if settings.SENTIMENT_ENABLED:
+            print(f"📰 Sentiment Analysis: ✅ ENABLED (will check news hourly)")
+        else:
+            print(f"📰 Sentiment Analysis: ❌ DISABLED (kill switch activated)")
+        
         print("=" * 60)
         
         try:
             while datetime.now() < end_time:
                 current_time = datetime.now()
+                
+                # Atualizar sentimento de mercado a cada hora (se habilitado)
+                if settings.SENTIMENT_ENABLED and (current_time - last_sentiment_check).total_seconds() >= 3600:  # 1 hora
+                    print(f"\n📰 Updating market sentiment...")
+                    current_market_sentiment = self.sentiment_manager.get_current_market_sentiment(
+                        hours=24, max_news=50
+                    )
+                    print(self.sentiment_manager.get_recent_news_summary())
+                    last_sentiment_check = current_time
                 
                 # Verificar se é hora de fazer análise
                 if (current_time - last_check).total_seconds() >= settings.CHECK_INTERVAL:
@@ -405,7 +432,26 @@ Average Trade Duration: {avg_duration} candles
                                     
                                     # Executar trade ao vivo se não há posições abertas
                                     if not self.active_positions and settings.API_KEY and settings.API_SECRET:
-                                        self._execute_live_trade(signal, recent_data.iloc[-1]['close'], confidence)
+                                        # Verificar sentimento antes de executar trade (se habilitado)
+                                        if settings.SENTIMENT_ENABLED and self.sentiment_manager:
+                                            trade_decision = self.sentiment_manager.should_trade(
+                                                signal_type=signal_type,
+                                                current_sentiment=current_market_sentiment
+                                            )
+                                            
+                                            if trade_decision['should_trade']:
+                                                # Ajustar confiança baseado no sentimento
+                                                adjusted_confidence = min(1.0, confidence + trade_decision['confidence_adjustment'])
+                                                print(f"  💡 Sentiment analysis: {trade_decision['reason']}")
+                                                print(f"  📊 Adjusted confidence: {confidence:.2f} -> {adjusted_confidence:.2f}")
+                                                
+                                                self._execute_live_trade(signal, recent_data.iloc[-1]['close'], adjusted_confidence)
+                                            else:
+                                                print(f"  🚫 Trade blocked by sentiment analysis: {trade_decision['reason']}")
+                                                self.logger.info(f"Trade blocked by sentiment: {trade_decision['reason']}")
+                                        else:
+                                            # Sentiment desabilitado - executar trade normalmente
+                                            self._execute_live_trade(signal, recent_data.iloc[-1]['close'], confidence)
                                     elif not settings.API_KEY:
                                         print("  ⚠️  API keys not configured - running in monitoring mode only")
                                     

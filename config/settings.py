@@ -21,6 +21,9 @@ class Settings:
     API_SECRET = os.getenv('BINANCE_API_SECRET', '')
     USE_DEMO = os.getenv('USE_BINANCE_DEMO', 'true').lower() == 'true'  # Use demo account by default
     
+    # Sentiment Analysis (KILL SWITCH)
+    SENTIMENT_ENABLED = os.getenv('SENTIMENT_ENABLED', 'true').lower() == 'true'
+    
     # Trading
     INITIAL_CAPITAL = 10000.0
     MAX_DRAWDOWN = 0.05

@@ -70,6 +70,36 @@ class DatabaseManager:
             )
         ''')
         
+        # Tabela para sentimento agregado de notícias
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS news_sentiment (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                score REAL,
+                label TEXT,
+                confidence REAL,
+                news_count INTEGER,
+                positive_count INTEGER,
+                negative_count INTEGER,
+                neutral_count INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Tabela para notícias individuais
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS news_articles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                title TEXT,
+                source TEXT,
+                sentiment_score REAL,
+                sentiment_label TEXT,
+                url TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         conn.commit()
         conn.close()
         logger.info("Database setup completed")
@@ -265,3 +295,61 @@ class DatabaseManager:
         conn.commit()
         conn.close()
         logger.info(f"Trade result saved: {trade_data['pattern']} {trade_data['result']} ${trade_data['profit']:.2f}")
+    
+    def save_news_sentiment(self, sentiment_data: dict):
+        """Salva sentimento agregado de notícias"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO news_sentiment 
+            (timestamp, score, label, confidence, news_count, 
+             positive_count, negative_count, neutral_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            sentiment_data['timestamp'],
+            sentiment_data['score'],
+            sentiment_data['label'],
+            sentiment_data['confidence'],
+            sentiment_data['news_count'],
+            sentiment_data['positive_count'],
+            sentiment_data['negative_count'],
+            sentiment_data['neutral_count']
+        ))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"News sentiment saved: {sentiment_data['label']} (score: {sentiment_data['score']:.2f})")
+    
+    def save_news_article(self, news_data: dict):
+        """Salva notícia individual com seu sentimento"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO news_articles 
+            (timestamp, title, source, sentiment_score, sentiment_label, url)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            news_data['timestamp'],
+            news_data['title'],
+            news_data['source'],
+            news_data['sentiment_score'],
+            news_data['sentiment_label'],
+            news_data.get('url', '')
+        ))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_recent_sentiment(self, hours: int = 24) -> pd.DataFrame:
+        """Retorna sentimentos recentes"""
+        conn = self.get_connection()
+        query = f"""
+            SELECT * FROM news_sentiment 
+            WHERE timestamp >= datetime('now', '-{hours} hours')
+            ORDER BY timestamp DESC
+        """
+        df = pd.read_sql(query, conn)
+        conn.close()
+        return df

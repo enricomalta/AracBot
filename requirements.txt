@@ -8,3 +8,4 @@ TA-Lib>=0.4.24
 joblib>=1.2.0
 scipy>=1.9.0
 python-dotenv>=0.19.0
+feedparser>=6.0.10
