@@ -4,15 +4,22 @@ import numpy as np
 from datetime import datetime, timedelta
 import logging
 from typing import Optional
+import sys
+import io
 
 def setup_logging(level=logging.INFO):
-    """Configura logging para a aplicação"""
+    """Configura logging para a aplicação com suporte a UTF-8"""
+    # Configurar o stdout para UTF-8 no Windows
+    if sys.platform == 'win32':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    
     logging.basicConfig(
         level=level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('bot_execution.log', mode='a'),
-            logging.StreamHandler()
+            logging.FileHandler('bot_execution.log', mode='a', encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
         ],
         force=True  # Força reconfiguração
     )

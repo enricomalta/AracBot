@@ -14,6 +14,7 @@ from analysis.multi_timeframe import MultiTimeframeAnalyzer
 from analysis.backtester import Backtester
 from analysis.performance import PerformanceAnalyzer
 from utils.helpers import setup_logging
+from utils.watchdog import BotWatchdog, InactivityDetector
 from news.news_sentiment_manager import NewsSentimentManager
 from data.market_data_collector import AdvancedMarketDataCollector
 from ml.prediction_tracker import PredictionTracker
@@ -348,7 +349,7 @@ Average Trade Duration: {avg_duration} candles
         else:
             print(f"📰 Sentiment Analysis: ❌ DISABLED (kill switch activated)")
         
-        print("=" * 60)
+        # print("=" * 60)
         
         try:
             while datetime.now() < end_time:
@@ -549,7 +550,7 @@ Average Trade Duration: {avg_duration} candles
                 print(f"  Avg Profit: ${metrics['avg_profit']:.2f}")
                 print(f"  Total Profit: ${metrics['total_profit']:.2f}")
             
-            print("========================")
+            # print("========================")
             
             return results
         else:
@@ -718,10 +719,21 @@ Average Trade Duration: {avg_duration} candles
             else:
                 self.logger.warning("Could not load sufficient historical data")
         
+        # Inicializar watchdog para detectar travamentos
+        watchdog = BotWatchdog(timeout_minutes=90, check_interval=30)
+        inactivity_detector = InactivityDetector(expected_cycle_interval_minutes=update_interval)
+        
+        def on_watchdog_timeout():
+            """Callback quando watchdog detecta travamento"""
+            self.logger.critical("WATCHDOG ALERT: Bot appears to be frozen! Check for stuck threads.")
+        
+        watchdog.start(on_timeout_callback=on_watchdog_timeout)
+        
         # Loop principal
         cycle = 0
         try:
             while True:
+                inactivity_detector.mark_cycle_start()
                 cycle += 1
                 timestamp = datetime.now()
                 
@@ -741,9 +753,28 @@ Average Trade Duration: {avg_duration} candles
                     current_price = float(current_klines['close'].iloc[-1])
                     self.logger.info(f"[PRICE] Current price: ${current_price:,.2f}")
                     
-                    # ========== 2. Coletar dados avançados ==========
+                    # ========== 2. Coletar dados avançados com timeout ==========
                     self.logger.info(f"\n[DATA] Collecting advanced market data...")
-                    market_data = self.market_collector.save_all_market_data(settings.SYMBOL)
+                    
+                    # Usar timeout para evitar travamento
+                    import threading
+                    market_data = {'sources': {}}
+                    
+                    def collect_market_data():
+                        nonlocal market_data
+                        try:
+                            market_data = self.market_collector.save_all_market_data(settings.SYMBOL)
+                        except Exception as e:
+                            self.logger.error(f"Error collecting market data: {e}")
+                    
+                    # Executar coleta em thread com timeout de 20 segundos
+                    thread = threading.Thread(target=collect_market_data, daemon=True)
+                    thread.start()
+                    thread.join(timeout=20)
+                    
+                    if thread.is_alive():
+                        self.logger.warning("Market data collection timed out after 20s, using empty data")
+                    
                     self.logger.info(f"[OK] Collected {len(market_data['sources'])} data sources")
                     
                     # Extrair valores
@@ -861,7 +892,10 @@ Average Trade Duration: {avg_duration} candles
                         except Exception as e:
                             self.logger.error(f"Error printing report: {e}")
                     
-                    # ========== Aguardar próximo ciclo ==========
+                    # ========== Marcar ciclo como completo e aguardar ==========
+                    inactivity_detector.mark_cycle_end()
+                    watchdog.mark_activity()
+                    
                     self.logger.info(f"\n[WAIT] Next update in {update_interval} minutes...")
                     time.sleep(update_interval * 60)
                     
@@ -877,6 +911,8 @@ Average Trade Duration: {avg_duration} candles
             self.logger.info("\n[STOP] Live mode stopped")
         except Exception as e:
             self.logger.error(f"Fatal error in live mode: {e}", exc_info=True)
+        finally:
+            watchdog.stop()
     
     def _predict_direction(self, current_price: float, features: dict, sentiment: float) -> dict:
         """Prediz direção baseada em padrões e ML"""

@@ -181,7 +181,7 @@ class PredictionTracker:
                 'confidence': prediction['confidence']
             }
             
-            status = "✅ ACERTO" if was_correct else "❌ ERRO"
+            status = "[✓] ACERTO" if was_correct else "[✗] ERRO"
             logger.info(f"{status} - Prediction #{prediction_id}: {actual_direction} "
                        f"@ {actual_price:.2f} (expected {target_price:.2f})")
             

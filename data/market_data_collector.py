@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 import time
 from config.settings import settings
+from utils.request_helper import RobustRequestSession
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +27,14 @@ class AdvancedMarketDataCollector:
         self.db = db_manager
         self.binance_fapi_url = "https://fapi.binance.com/fapi/v1"
         self.cryptoquant_url = "https://api.cryptoquant.com/v1"
-        self.session = requests.Session()
-        self.session.timeout = 10
+        # Usar session robusta com retry automático
+        self.session = RobustRequestSession(max_retries=3, timeout=8, thread_timeout=12)
     
     # ==================== OPEN INTEREST ====================
     
     def fetch_open_interest(self, symbol: str = "BTCUSDT") -> Optional[Dict]:
         """
-        Busca Open Interest atual do mercado de futuros Binance
+        Busca Open Interest atual do mercado de futuros Binance com retry automático
         
         Returns:
             {
@@ -48,8 +49,11 @@ class AdvancedMarketDataCollector:
             url = f"{self.binance_fapi_url}/openInterest"
             params = {'symbol': symbol}
             
-            response = self.session.get(url, params=params)
-            response.raise_for_status()
+            response = self.session.get_with_timeout(url, params=params, timeout=8)
+            if response is None:
+                logger.error(f"Failed to fetch Open Interest for {symbol} after retries")
+                return None
+            
             data = response.json()
             
             oi_current = float(data.get('openInterest', 0))
@@ -123,7 +127,7 @@ class AdvancedMarketDataCollector:
     
     def fetch_funding_rate(self, symbol: str = "BTCUSDT") -> Optional[Dict]:
         """
-        Busca a taxa de financiamento atual (Perpetual Contracts)
+        Busca a taxa de financiamento atual (Perpetual Contracts) com retry automático
         
         Uma taxa alta positiva indica pressão LONG (bearish a curto prazo)
         Uma taxa alta negativa indica pressão SHORT (bullish a curto prazo)
@@ -141,8 +145,11 @@ class AdvancedMarketDataCollector:
             url = f"{self.binance_fapi_url}/fundingRate"
             params = {'symbol': symbol, 'limit': 1}
             
-            response = self.session.get(url, params=params)
-            response.raise_for_status()
+            response = self.session.get_with_timeout(url, params=params, timeout=8)
+            if response is None:
+                logger.error(f"Failed to fetch Funding Rate for {symbol} after retries")
+                return None
+            
             data = response.json()
             
             if data:
@@ -341,7 +348,7 @@ class AdvancedMarketDataCollector:
     def fetch_order_book_snapshot(self, symbol: str = "BTCUSDT", 
                                  limit: int = 20) -> Optional[Dict]:
         """
-        Captura snapshot do order book (livro de ordens)
+        Captura snapshot do order book (livro de ordens) com retry automático
         
         Detecta:
         - Paredes (huge orders que suportam/resistem)
@@ -363,8 +370,11 @@ class AdvancedMarketDataCollector:
             url = f"https://api.binance.com/api/v3/depth"
             params = {'symbol': symbol, 'limit': limit}
             
-            response = self.session.get(url, params=params)
-            response.raise_for_status()
+            response = self.session.get_with_timeout(url, params=params, timeout=8)
+            if response is None:
+                logger.error(f"Failed to fetch Order Book for {symbol} after retries")
+                return None
+            
             data = response.json()
             
             bids = data.get('bids', [])

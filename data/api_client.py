@@ -9,19 +9,21 @@ from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from config.settings import settings
 from data.database import DatabaseManager
+from utils.request_helper import RobustRequestSession
 
 logger = logging.getLogger(__name__)
 
 class APIClient:
     def __init__(self, db_manager):
         self.base_url = settings.BINANCE_API_URL
-        self.session = requests.Session()
         self.db = db_manager
+        # Usar session robusta com retry automático
+        self.session = RobustRequestSession(max_retries=3, timeout=10, thread_timeout=15)
         
     def fetch_klines(self, symbol: str, interval: str, limit: int = 500, 
                     start_time: str = None, end_time: str = None) -> pd.DataFrame:
         """
-        Busca dados de klines da Binance API
+        Busca dados de klines da Binance API com retry automático
         """
         try:
             params = {
@@ -35,10 +37,14 @@ class APIClient:
             if end_time:
                 params['endTime'] = self._parse_timestamp(end_time)
             
-            response = self.session.get(self.base_url, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            # Usar session robusta com retry e timeout
+            response = self.session.get_with_timeout(self.base_url, params=params, timeout=10)
             
+            if response is None:
+                logger.error(f"Failed to fetch klines for {symbol} after retries")
+                return None
+            
+            data = response.json()
             df = self._parse_klines_data(data)
             return df
             
