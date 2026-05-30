@@ -19,11 +19,13 @@ Write-Host ""
 $StartTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Write-Host "Inicio: $StartTime" -ForegroundColor Cyan
 
-# Criar arquivo de log
-$LogFile = ".\logs\live_bot_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
-if (-not (Test-Path ".\logs")) {
-    New-Item -ItemType Directory -Path ".\logs" -Force | Out-Null
+# Criar arquivo de log com caminho absoluto
+$LogsDir = Join-Path -Path $PSScriptRoot -ChildPath "logs"
+if (-not (Test-Path $LogsDir)) {
+    New-Item -ItemType Directory -Path $LogsDir -Force | Out-Null
 }
+
+$LogFile = Join-Path -Path $LogsDir -ChildPath "live_bot_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
 
 Write-Host "Log sera salvo em: $LogFile" -ForegroundColor Cyan
 Write-Host ""
@@ -40,7 +42,7 @@ $ProcessArgs = @(
 )
 
 # Redirecionar output para arquivo de log
-$Process = Start-Process -FilePath "python" -ArgumentList $ProcessArgs -NoNewWindow -PassThru -RedirectStandardOutput $LogFile -RedirectStandardError $LogFile
+$Process = Start-Process -FilePath "python" -ArgumentList $ProcessArgs -NoNewWindow -PassThru -RedirectStandardOutput $LogFile
 
 $ProcessId = $Process.Id
 Write-Host "Processo iniciado com PID: $ProcessId" -ForegroundColor Green
@@ -57,7 +59,7 @@ if ($Process.HasExited) {
 } else {
     Write-Host "Bot rodando com sucesso!" -ForegroundColor Green
     Write-Host ""
-    Write-Host "Para parar o bot, use:" -ForegroundColor Yellow
+    Write-Host "Para parar o bot abra uma nova janela do PowerShell e use:" -ForegroundColor Yellow
     Write-Host "  Stop-Process -Id $ProcessId" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Para monitorar o bot em tempo real, use:" -ForegroundColor Yellow

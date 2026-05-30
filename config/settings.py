@@ -3,12 +3,15 @@ import os
 from datetime import timedelta
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables from .env.local file
 load_dotenv()
 
 class Settings:
+    # Base do projeto (diretório pai de config/)
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
     # Database
-    DB_PATH = "bitcoin_patterns.db"
+    DB_PATH = os.getenv('DB_PATH', os.path.join(BASE_DIR, 'bitcoin_patterns.db'))
     
     # API
     BINANCE_API_URL = "https://api.binance.com/api/v3/klines"
@@ -44,9 +47,13 @@ class Settings:
     # ML Settings
     ML_MODEL_PATH = "ml_models.pkl"
     ML_SCALER_PATH = "ml_scalers.pkl"
+    RETRAIN_WINDOW_DAYS = int(os.getenv('RETRAIN_WINDOW_DAYS', '30'))
     
     # Backtesting
     BACKTEST_INITIAL_CAPITAL = 10000.0
     BACKTEST_START_DATE = "2023-01-01"
+
+    # Logging
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 
 settings = Settings()

@@ -347,7 +347,7 @@ tracker.print_accuracy_report()
 Antes de deixar rodando:
 
 - [x] Dependências instaladas (pandas, numpy, scikit-learn, talib, requests)
-- [x] Chaves da API da Binance no `.env` (opcional, demo por padrão)
+- [x] Chaves da API da Binance no `.env.local` (opcional, demo por padrão)
 - [x] Banco de dados `bitcoin_patterns.db` existe
 - [x] Internet conectada
 - [x] Terminal aberto e aguardando logs

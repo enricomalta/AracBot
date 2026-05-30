@@ -338,7 +338,7 @@ Antes de começar, verifique:
 ✅ Banco de dados pode ser criado       ls -la bitcoin_patterns.db (ok se não existe)
 ✅ Internet conectada                   ping api.binance.com
 ✅ APIs acessíveis                      curl https://api.binance.com/api/v3/klines
-✅ Chaves da API (opcional)             cat .env | grep BINANCE
+✅ Chaves da API (opcional)             cat .env.local | grep BINANCE
 ✅ Terminal com espaço em branco        clear && ls
 
 Se tudo OK: 🟢 Pronto para começar!

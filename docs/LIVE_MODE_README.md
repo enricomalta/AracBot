@@ -375,7 +375,7 @@ Ratio ≈ 1.0 = Equilibrado
    - Validação de acurácia antes de trading real
 
 2. **API Keys**
-   - Mantenha `.env` seguro
+   - Mantenha `.env.local` seguro
    - Use demo account por padrão
 
 3. **Rate Limiting**

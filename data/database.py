@@ -99,6 +99,26 @@ class DatabaseManager:
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Tabela para sinais coletados (usada no retrain)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS collected_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME,
+                pattern TEXT,
+                confidence REAL,
+                signal TEXT,
+                price REAL,
+                market_data TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Evita duplicata exata do mesmo sinal no mesmo timestamp
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_collected_signals_unique
+            ON collected_signals(timestamp, pattern, signal)
+        ''')
         
         # Índice para evitar duplicatas por URL
         cursor.execute('''
@@ -435,7 +455,7 @@ class DatabaseManager:
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )''')
         
-        conn.execute('''INSERT INTO collected_signals 
+        conn.execute('''INSERT OR IGNORE INTO collected_signals 
             (timestamp, pattern, confidence, signal, price, market_data)
             VALUES (?, ?, ?, ?, ?, ?)''', (
             signal_data['timestamp'],
@@ -454,6 +474,19 @@ class DatabaseManager:
     def get_collected_signals(self) -> pd.DataFrame:
         """Retorna sinais coletados para análise"""
         conn = self.get_connection()
+
+        # Garante existência da tabela para suportar execução direta de retrain
+        conn.execute('''CREATE TABLE IF NOT EXISTS collected_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME,
+            pattern TEXT,
+            confidence REAL,
+            signal TEXT,
+            price REAL,
+            market_data TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )''')
+
         df = pd.read_sql("SELECT * FROM collected_signals ORDER BY timestamp", conn)
         conn.close()
         return df

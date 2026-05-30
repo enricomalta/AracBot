@@ -14,9 +14,18 @@ def setup_logging(level=logging.INFO):
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
     
+    # INFO+ usa formato limpo; DEBUG usa formato detalhado para troubleshooting.
+    if level <= logging.DEBUG:
+        log_format = '%(asctime)s,%(msecs)03d - %(name)s - %(levelname)s - %(message)s'
+        date_format = '%Y-%m-%d %H:%M:%S'
+    else:
+        log_format = '%(asctime)s - %(levelname)s - %(message)s'
+        date_format = '%Y-%m-%d %H:%M:%S'
+
     logging.basicConfig(
         level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        format=log_format,
+        datefmt=date_format,
         handlers=[
             logging.FileHandler('bot_execution.log', mode='a', encoding='utf-8'),
             logging.StreamHandler(sys.stdout)

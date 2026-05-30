@@ -47,10 +47,10 @@ Ou deixar de lado (o bot funciona sem isso).
 Se quiser usar conta real (NÃO RECOMENDADO para testes):
 
 1. Gerar API keys em https://www.binance.com/api
-2. Criar arquivo `.env` na pasta do bot:
+2. Criar arquivo `.local` na pasta do bot:
 
 ```bash
-cat > .env << EOF
+cat > .env.local << EOF
 BINANCE_API_KEY=sua_chave_aqui
 BINANCE_API_SECRET=seu_secret_aqui
 USE_BINANCE_DEMO=false
@@ -291,7 +291,7 @@ find . -name "bitcoin_patterns_backup_*.db" -mtime +30 -delete
 ### Proteção de API Keys
 ```bash
 # Nunca commit .env no git
-echo ".env" >> .gitignore
+echo ".env.local" >> .gitignore
 
 # Se usar chaves reais, use demo account primeiro
 USE_BINANCE_DEMO=true  # Padrão (seguro)

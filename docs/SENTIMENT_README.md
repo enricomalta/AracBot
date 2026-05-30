@@ -306,10 +306,10 @@ pip install feedparser
 
 ### Kill Switch (Ativar/Desativar)
 
-O sistema possui um **kill switch** que permite ativar ou desativar completamente a análise de sentimento via arquivo `.env`:
+O sistema possui um **kill switch** que permite ativar ou desativar completamente a análise de sentimento via arquivo `.env.local`:
 
 ```bash
-# .env
+# .env.local
 SENTIMENT_ENABLED=true   # Set to false to disable sentiment analysis
 ```
 
@@ -326,7 +326,7 @@ Quando desabilitado:
 - Você quer comparar performance com/sem sentimento
 - Problemas com rate limiting de APIs
 
-### Variáveis de Ambiente (.env)
+### Variáveis de Ambiente (.local)
 
 ```bash
 # Binance API
@@ -364,7 +364,7 @@ Para dúvidas ou issues:
 - ✅ Database para histórico de sentimento
 - ✅ Cache de 30 minutos
 - ✅ Sistema de decisão de trading
-- ✅ **Kill switch** para ativar/desativar via .env
+- ✅ **Kill switch** para ativar/desativar via .env.local
 
 ### v1.1 (Planejado)
 - ⏳ Sentiment Transformer com BERT

@@ -11,10 +11,11 @@ from config.settings import settings
 logger = logging.getLogger(__name__)
 
 class Backtester:
-    def __init__(self, initial_capital: float = settings.BACKTEST_INITIAL_CAPITAL):
+    def __init__(self, initial_capital: float = settings.BACKTEST_INITIAL_CAPITAL, db_manager=None):
         self.initial_capital = initial_capital
         self.results = {}
         self.risk_manager = RiskManager(initial_capital)
+        self.db_manager = db_manager
     
     def run_backtest(self, historical_data: pd.DataFrame, 
                     patterns_to_test: List[str] = None) -> Dict:
@@ -41,6 +42,24 @@ class Backtester:
             
             # Detectar padrões
             signals = detector.analyze_market(current_data)
+
+            # Persistir sinais detectados para retreinamento
+            if self.db_manager and signals:
+                timestamp = str(current_data['timestamp'].iloc[-1])
+                market_snapshot = current_data.tail(10).to_dict()
+                for s in signals:
+                    try:
+                        signal_data = {
+                            'timestamp': timestamp,
+                            'pattern': s.get('pattern', 'unknown'),
+                            'confidence': s.get('confidence', 0),
+                            'signal': s.get('signal', 'unknown'),
+                            'price': s.get('price', current_price),
+                            'market_data': market_snapshot
+                        }
+                        self.db_manager.save_signal_for_analysis(signal_data)
+                    except Exception as e:
+                        logger.warning(f"Could not persist backtest signal: {e}")
             
             for signal in signals:
                 # Filtrar padrões com performance ruim

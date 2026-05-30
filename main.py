@@ -3,6 +3,7 @@ import logging
 import argparse
 from datetime import datetime, timedelta
 import time
+import pandas as pd
 
 from config.settings import settings
 from data.database import DatabaseManager
@@ -23,7 +24,9 @@ from ml.feature_engineering import FeatureEngineer
 
 class AdvancedBitcoinPatternTracker:
     def __init__(self):
-        setup_logging(logging.INFO)
+        log_level_name = str(settings.LOG_LEVEL).upper()
+        log_level = getattr(logging, log_level_name, logging.INFO)
+        setup_logging(log_level)
         self.logger = logging.getLogger(__name__)
         
         # Initialize components - compartilhar instância do database
@@ -304,24 +307,57 @@ Average Trade Duration: {avg_duration} candles
         self.logger.info(summary)
         logging.getLogger().handlers[0].flush()
         
-    def retrain_ml_with_collected_data(self):
+    def retrain_ml_with_collected_data(self, retrain_days=None):
         """Retreina modelos ML com dados de sinais coletados"""
         self.logger.info("Retraining ML models with collected signal data...")
         
         # Buscar sinais coletados
         collected_signals = self.db.get_collected_signals()
+
+        # Filtrar janela de treinamento (dias)
+        if retrain_days is None:
+            retrain_days = settings.RETRAIN_WINDOW_DAYS
+
+        if retrain_days and retrain_days > 0 and not collected_signals.empty:
+            collected_signals['timestamp'] = pd.to_datetime(collected_signals['timestamp'], errors='coerce')
+            cutoff = datetime.now() - timedelta(days=retrain_days)
+            collected_signals = collected_signals[collected_signals['timestamp'] >= cutoff]
+            self.logger.info(
+                f"Retrain window applied: last {retrain_days} days (cutoff: {cutoff.strftime('%Y-%m-%d %H:%M:%S')})"
+            )
         
         if collected_signals.empty:
             self.logger.warning("No collected signals found for retraining")
             return
         
         self.logger.info(f"Found {len(collected_signals)} collected signals for retraining")
-        
-        # Preparar dados para ML
-        # Aqui você pode implementar lógica para criar labels (win/loss) baseados em performance futura
-        # Por enquanto, apenas log
-        for _, signal in collected_signals.iterrows():
-            self.logger.info(f"Signal: {signal['pattern']} conf {signal['confidence']:.2f} at ${signal['price']:.2f}")
+
+        # Resumo para evitar spam de log e facilitar auditoria dos dados
+        try:
+            collected_signals['timestamp'] = collected_signals['timestamp'].astype(str)
+            min_ts = collected_signals['timestamp'].min()
+            max_ts = collected_signals['timestamp'].max()
+            self.logger.info(f"Collected signals period: {min_ts} -> {max_ts}")
+
+            by_pattern = (
+                collected_signals.groupby(['pattern', 'signal'])
+                .size()
+                .reset_index(name='count')
+                .sort_values('count', ascending=False)
+            )
+            for _, row in by_pattern.iterrows():
+                self.logger.info(
+                    f"Pattern summary: {row['pattern']} ({row['signal']}) -> {int(row['count'])} signals"
+                )
+
+            sample = collected_signals.tail(5)
+            for _, signal in sample.iterrows():
+                self.logger.info(
+                    f"Sample signal: {signal['timestamp']} | {signal['pattern']} "
+                    f"({signal['signal']}) conf {signal['confidence']:.2f} at ${signal['price']:.2f}"
+                )
+        except Exception as e:
+            self.logger.warning(f"Could not generate retrain summary: {e}")
         
         # TODO: Implementar retreinamento real
         self.logger.info("ML retraining completed (placeholder)")
@@ -522,7 +558,7 @@ Average Trade Duration: {avg_duration} candles
         print(f"Fetched {len(historical_data) if historical_data is not None else 0} data points")
         
         if historical_data is not None:
-            backtester = Backtester()
+            backtester = Backtester(db_manager=self.db)
             results = backtester.run_backtest(historical_data)
             
             if 'error' in results:
@@ -702,7 +738,7 @@ Average Trade Duration: {avg_duration} candles
         
         # Carregar histórico inicial
         if collect_days > 0:
-            self.logger.info(f"\n[DATA] Loading {collect_days} days of historical data...")
+            self.logger.info(f"[DATA] Loading {collect_days} days of historical data...")
             end_date = datetime.now()
             start_date = end_date - timedelta(days=collect_days)
             
@@ -737,7 +773,7 @@ Average Trade Duration: {avg_duration} candles
                 cycle += 1
                 timestamp = datetime.now()
                 
-                self.logger.info(f"\n{'='*70}")
+                self.logger.info(f"{'='*70}")
                 self.logger.info(f"Cycle #{cycle} - {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
                 self.logger.info(f"{'='*70}")
                 
@@ -754,7 +790,7 @@ Average Trade Duration: {avg_duration} candles
                     self.logger.info(f"[PRICE] Current price: ${current_price:,.2f}")
                     
                     # ========== 2. Coletar dados avançados com timeout ==========
-                    self.logger.info(f"\n[DATA] Collecting advanced market data...")
+                    self.logger.info(f"[DATA] Collecting advanced market data...")
                     
                     # Usar timeout para evitar travamento
                     import threading
@@ -801,7 +837,7 @@ Average Trade Duration: {avg_duration} candles
                             self.logger.warning(f"Could not fetch sentiment: {e}")
                     
                     # ========== 3. Criar features ==========
-                    self.logger.info(f"\n[FEAT] Creating technical features...")
+                    self.logger.info(f"[FEAT] Creating technical features...")
                     
                     hist_data = self.api_client.fetch_klines(settings.SYMBOL, '1h', limit=100)
                     features_dict = {}
@@ -830,9 +866,32 @@ Average Trade Duration: {avg_duration} candles
                                 'funding_rate': funding_rate
                             }
                             self.logger.info(f"[OK] Created {len(features_dict)} features")
+
+                        # Coletar sinais de padrões também neste modo live
+                        signals = self.pattern_bot.analyze_market(hist_data.tail(24))
+                        if signals:
+                            collected = 0
+                            for s in signals:
+                                try:
+                                    signal_data = {
+                                        'timestamp': str(timestamp),
+                                        'pattern': s.get('pattern', 'unknown'),
+                                        'confidence': s.get('confidence', 0),
+                                        'signal': s.get('signal', 'unknown'),
+                                        'price': s.get('price', current_price),
+                                        'market_data': hist_data.tail(10).to_dict()
+                                    }
+                                    self.db.save_signal_for_analysis(signal_data)
+                                    collected += 1
+                                except Exception as e:
+                                    self.logger.warning(f"Could not save live signal: {e}")
+
+                            self.logger.info(f"[SIG] Collected {collected} pattern signals for retraining")
+                        else:
+                            self.logger.info("[SIG] No pattern signals detected this cycle")
                     
                     # ========== 4. Gerar previsões ==========
-                    self.logger.info(f"\n[PRED] Generating predictions...\n")
+                    self.logger.info(f"[PRED] Generating predictions...")
                     
                     for horizon in [prediction_horizon]:
                         try:
@@ -862,7 +921,7 @@ Average Trade Duration: {avg_duration} candles
                             self.logger.error(f"Error generating prediction for {horizon}: {e}")
                     
                     # ========== 5. Validar previsões expiradas ==========
-                    self.logger.info(f"\n[VAL] Validating expired predictions...")
+                    self.logger.info(f"[VAL] Validating expired predictions...")
                     
                     pending = self.prediction_tracker.get_pending_predictions()
                     if pending:
@@ -896,7 +955,7 @@ Average Trade Duration: {avg_duration} candles
                     inactivity_detector.mark_cycle_end()
                     watchdog.mark_activity()
                     
-                    self.logger.info(f"\n[WAIT] Next update in {update_interval} minutes...")
+                    self.logger.info(f"[WAIT] Next update in {update_interval} minutes...")
                     time.sleep(update_interval * 60)
                     
                 except KeyboardInterrupt:
@@ -1005,6 +1064,8 @@ def main():
                        help='Primary prediction horizon (default: 24h)')
     parser.add_argument('--update-interval', type=int, default=60,
                        help='Update interval in minutes (default: 60)')
+    parser.add_argument('--retrain-days', type=int, default=None,
+                       help='Training window in days for retrain mode (default: RETRAIN_WINDOW_DAYS env or 30)')
     
     args = parser.parse_args()
     
@@ -1025,7 +1086,7 @@ def main():
         elif args.mode == 'paper':
             tracker.run_paper_trading(args.duration)
         elif args.mode == 'retrain':
-            tracker.retrain_ml_with_collected_data()
+            tracker.retrain_ml_with_collected_data(retrain_days=args.retrain_days)
     
     except KeyboardInterrupt:
         tracker.logger.info("Execution interrupted by user")

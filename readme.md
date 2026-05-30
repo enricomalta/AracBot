@@ -17,7 +17,7 @@
 
 ## 📌 O Que é?
 
-**Bot BTC** é um sistema inteligente de análise e previsão de preços de Bitcoin que funciona **24/7**, coletando dados de múltiplas fontes, analisando com machine learning e gerando **previsões automáticas** do movimento do mercado nos próximos 24 horas.
+**AracBot** é um sistema inteligente de análise e previsão de preços de Bitcoin que funciona **24/7**, coletando dados de múltiplas fontes, analisando com machine learning e gerando **previsões automáticas** do movimento do mercado nos próximos 24 horas.
 
 - **Objetivo:** Prever com 70%+ de acurácia a direção e preço do Bitcoin
 - **Atualização:** A cada 1 hora
@@ -95,12 +95,18 @@ pip install -r requirements.txt
 
 ### 2️⃣ Configurar API Keys (Opcional)
 
-Crie um arquivo `.env` ou configure variáveis de ambiente:
+Crie um arquivo `.env.local` ou configure variáveis de ambiente:
 
-```env
+```env.local
 BINANCE_API_KEY=your_api_key_here
 BINANCE_API_SECRET=your_api_secret_here
 USE_BINANCE_DEMO=true  # true para demo, false para real
+
+# Opcional: sobrescrever caminho do banco
+DB_PATH=D:/Dados/Coding/bot_btc/bitcoin_patterns.db
+
+# Opcional: janela padrão do retrain em dias
+RETRAIN_WINDOW_DAYS=30
 ```
 
 ### 3️⃣ Executar
@@ -132,9 +138,19 @@ python main.py --mode backtest --backtest-days 30
 # 🔧 RETRAIN - Retreina modelos com dados coletados
 python main.py --mode retrain
 
+# 🔧 RETRAIN com janela customizada (dias)
+python main.py --mode retrain --retrain-days 7
+
 # 📈 REPORT - Gera relatório de performance
 python main.py --mode report
 ```
+
+### Notas Operacionais (v1.2.1)
+
+- O modo live com previsões também coleta sinais de padrões para alimentar `collected_signals`.
+- O backtest agora persiste sinais detectados para uso em retrain.
+- O retrain aceita janela configurável por `--retrain-days`.
+- Se `--retrain-days` não for informado, usa `RETRAIN_WINDOW_DAYS` (default 30).
 
 ---
 
@@ -339,7 +355,7 @@ Documentação completa disponível em `/docs`:
 
 1. Clone ou extraia este repositório
 2. Instale: `pip install -r requirements.txt`
-3. Configure `.env` (opcional, funciona sem)
+3. Configure `.env.local` (opcional, funciona sem)
 4. Execute: `python main.py --mode live --collect-days 30`
 5. Monitore os logs no console
 

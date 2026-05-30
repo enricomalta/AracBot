@@ -108,7 +108,7 @@ class APIClient:
         if not cached_data.empty and len(cached_data) >= expected_points * 0.9:
             # Usar cache se tiver dados suficientes
             logger.info(f"Using cached data for {symbol} {timeframe} ({len(cached_data)} records)")
-            print(f"Using cached data: {len(cached_data)} records")
+            # print(f"Using cached data: {len(cached_data)} records")
             return cached_data
         
         # Buscar da API se cache insuficiente
