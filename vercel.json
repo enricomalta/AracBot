@@ -1,8 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/cron.py": { "maxDuration": 30 },
-    "api/worker.py": { "maxDuration": 300 },
-    "api/approve-purchase.py": { "maxDuration": 60 }
+    "api/server.py": { "maxDuration": 300 }
   }
 }
