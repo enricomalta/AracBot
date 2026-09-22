@@ -100,6 +100,42 @@ class DatabaseManager:
             )
         ''')
 
+        # Receitas de pipeline ML (hash dos passos/decisões de configuração)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ml_recipe_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_hash TEXT UNIQUE,
+                symbol TEXT,
+                timeframe TEXT,
+                horizon TEXT,
+                config_json TEXT,
+                total_predictions INTEGER,
+                accuracy REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Previsões geradas por uma receita para análise de acertos/erros
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ml_recipe_predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER,
+                timestamp DATETIME,
+                predicted_direction TEXT,
+                actual_direction TEXT,
+                confidence REAL,
+                was_correct INTEGER,
+                decision_hash TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (run_id) REFERENCES ml_recipe_runs(id)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_ml_recipe_predictions_run_id
+            ON ml_recipe_predictions(run_id)
+        ''')
+
         # Tabela para sinais coletados (usada no retrain)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS collected_signals (
@@ -570,6 +606,63 @@ class DatabaseManager:
             return False
         finally:
             conn.close()
+
+    def save_ml_recipe_run(self, recipe_hash: str, symbol: str, timeframe: str,
+                           horizon: str, config_json: str,
+                           total_predictions: int, accuracy: float) -> int:
+        """Salva execução de receita de ML e retorna run_id."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            INSERT OR REPLACE INTO ml_recipe_runs
+            (recipe_hash, symbol, timeframe, horizon, config_json, total_predictions, accuracy)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            recipe_hash,
+            symbol,
+            timeframe,
+            horizon,
+            config_json,
+            total_predictions,
+            accuracy
+        ))
+
+        conn.commit()
+
+        cursor.execute('SELECT id FROM ml_recipe_runs WHERE recipe_hash = ?', (recipe_hash,))
+        row = cursor.fetchone()
+        conn.close()
+
+        return row[0] if row else -1
+
+    def save_ml_recipe_predictions(self, run_id: int, predictions: list):
+        """Salva previsões de uma execução de receita."""
+        if run_id <= 0 or not predictions:
+            return
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.executemany('''
+            INSERT INTO ml_recipe_predictions
+            (run_id, timestamp, predicted_direction, actual_direction, confidence, was_correct, decision_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', [
+            (
+                run_id,
+                p['timestamp'],
+                p['predicted_direction'],
+                p['actual_direction'],
+                p['confidence'],
+                p['was_correct'],
+                p['decision_hash']
+            )
+            for p in predictions
+        ])
+
+        conn.commit()
+        conn.close()
     
     def get_recent_sentiment(self, hours: int = 24) -> pd.DataFrame:
         """Retorna sentimentos recentes"""

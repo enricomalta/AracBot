@@ -24,6 +24,7 @@
 - **Dados:** 6 fontes ativas (técnicas, fundamentais, sentimento)
 - **ML:** Ensemble de modelos Random Forest + Gradient Boost
 - **Validação:** Automática após 24 horas
+- **Full-History ML:** Avaliação walk-forward em toda série histórica com hash de receita e decisões
 
 ---
 
@@ -83,6 +84,14 @@
 - Relatórios diários de desempenho
 - Ranking de modelos para otimização
 
+### 🧬 Full History ML + Hash de Receita
+
+- Coleta paginada da série histórica completa (sem limite de 1000 candles)
+- Treinamento e avaliação walk-forward (sem look-ahead bias)
+- Geração de `recipe_hash` com configuração completa da execução
+- Geração de `decision_hash` para cada previsão/decisão da série
+- Persistência de acurácia e decisões em tabelas dedicadas para evolução futura
+
 ---
 
 ## 🚀 Quick Start
@@ -107,6 +116,11 @@ DB_PATH=D:/Dados/Coding/bot_btc/bitcoin_patterns.db
 
 # Opcional: janela padrão do retrain em dias
 RETRAIN_WINDOW_DAYS=30
+
+# Logging
+# INFO: formato limpo
+# DEBUG: formato detalhado com módulo e milissegundos
+LOG_LEVEL=INFO
 ```
 
 ### 3️⃣ Executar
@@ -141,9 +155,26 @@ python main.py --mode retrain
 # 🔧 RETRAIN com janela customizada (dias)
 python main.py --mode retrain --retrain-days 7
 
+# 🧬 FULL-ML - Treina/valida em toda série histórica com hash de receita
+python main.py --mode full-ml --full-ml-horizon 24h
+
+# 🧬 FULL-ML com parâmetros avançados
+python main.py --mode full-ml --full-ml-horizon 24h --full-ml-min-train-size 1000 --full-ml-retrain-every 24 --start-date "2019-01-01 00:00:00" --end-date "2020-01-01 00:00:00"
+
 # 📈 REPORT - Gera relatório de performance
 python main.py --mode report
 ```
+
+### Novos Parâmetros CLI
+
+| Parâmetro | Tipo | Padrão | Descrição |
+|-----------|------|--------|-----------|
+| `--retrain-days` | int | `RETRAIN_WINDOW_DAYS` ou `30` | Janela em dias para modo retrain |
+| `--full-ml-horizon` | str | `24h` | Horizonte da previsão no modo full-ml (`1h`, `4h`, `24h`) |
+| `--full-ml-min-train-size` | int | `1000` | Tamanho mínimo de treino antes da 1ª previsão walk-forward |
+| `--full-ml-retrain-every` | int | `24` | Re-treino a cada N previsões no modo full-ml |
+| `--start-date` | str | vazio | Data inicial opcional (`YYYY-MM-DD HH:MM:SS`) |
+| `--end-date` | str | vazio | Data final opcional (`YYYY-MM-DD HH:MM:SS`) |
 
 ### Notas Operacionais (v1.2.1)
 
@@ -151,6 +182,8 @@ python main.py --mode report
 - O backtest agora persiste sinais detectados para uso em retrain.
 - O retrain aceita janela configurável por `--retrain-days`.
 - Se `--retrain-days` não for informado, usa `RETRAIN_WINDOW_DAYS` (default 30).
+- O modo `full-ml` salva execução em `ml_recipe_runs` e previsões em `ml_recipe_predictions`.
+- `LOG_LEVEL=INFO` usa formato de log simplificado; `LOG_LEVEL=DEBUG` usa formato detalhado.
 
 ---
 
@@ -257,6 +290,7 @@ bot_btc/
 │   └── elliott_waves.py
 ├── analysis/
 │   ├── backtester.py
+│   ├── full_history_ml.py
 │   ├── performance.py
 │   └── multi_timeframe.py
 ├── risk/
@@ -344,7 +378,7 @@ Documentação completa disponível em `/docs`:
 
 ✅ **1.825 linhas de código Python**
 ✅ **1.850 linhas de documentação**
-✅ **11 novas tabelas de banco de dados**
+✅ **13 novas tabelas de banco de dados**
 ✅ **6 documentos guias + tutoriais**
 ✅ **30+ indicadores técnicos**
 ✅ **6 fontes de dados externas**

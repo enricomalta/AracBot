@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timedelta
 import time
 import pandas as pd
+from typing import Optional
 
 from config.settings import settings
 from data.database import DatabaseManager
@@ -14,6 +15,7 @@ from risk.risk_manager import RiskManager
 from analysis.multi_timeframe import MultiTimeframeAnalyzer
 from analysis.backtester import Backtester
 from analysis.performance import PerformanceAnalyzer
+from analysis.full_history_ml import FullHistoryMLEvaluator
 from utils.helpers import setup_logging
 from utils.watchdog import BotWatchdog, InactivityDetector
 from news.news_sentiment_manager import NewsSentimentManager
@@ -550,41 +552,41 @@ Average Trade Duration: {avg_duration} candles
             end_date = datetime.now().replace(minute=0, second=0, microsecond=0)
             start_date = (end_date - timedelta(days=days)).replace(minute=0, second=0, microsecond=0)
         
-        print(f"Fetching data from {start_date} to {end_date}")
+        self.logger.info(f"Fetching data from {start_date} to {end_date}")
         historical_data = self.api_client.get_historical_data(
             settings.SYMBOL, '1h', start_date, end_date
         )
         
-        print(f"Fetched {len(historical_data) if historical_data is not None else 0} data points")
+        self.logger.info(f"Fetched {len(historical_data) if historical_data is not None else 0} data points")
         
         if historical_data is not None:
             backtester = Backtester(db_manager=self.db)
             results = backtester.run_backtest(historical_data)
             
             if 'error' in results:
-                print(f"Backtest Error: {results['error']}")
+                self.logger.error(f"Backtest Error: {results['error']}")
                 return None
             
-            print("=== BACKTEST RESULTS ===")
-            print(f"Total Trades: {results['total_trades']}")
-            print(f"Winning Trades: {results['winning_trades']}")
-            print(f"Losing Trades: {results['losing_trades']}")
-            print(f"Win Rate: {results['win_rate']:.2%}")
-            print(f"Total Return: ${results['total_return']:.2f}")
-            print(f"Return %: {results['return_percent']:.2f}%")
-            print(f"Sharpe Ratio: {results['sharpe_ratio']:.2f}")
-            print(f"Max Drawdown: {results['max_drawdown']:.2f}%")
-            print(f"Profit Factor: {results['profit_factor']:.2f}")
-            print(f"Average Trade Return: ${results['avg_trade_return']:.2f}")
-            print(f"Final Capital: ${results['final_capital']:.2f}")
+            self.logger.info("=== BACKTEST RESULTS ===")
+            self.logger.info(f"Total Trades: {results['total_trades']}")
+            self.logger.info(f"Winning Trades: {results['winning_trades']}")
+            self.logger.info(f"Losing Trades: {results['losing_trades']}")
+            self.logger.info(f"Win Rate: {results['win_rate']:.2%}")
+            self.logger.info(f"Total Return: ${results['total_return']:.2f}")
+            self.logger.info(f"Return %: {results['return_percent']:.2f}%")
+            self.logger.info(f"Sharpe Ratio: {results['sharpe_ratio']:.2f}")
+            self.logger.info(f"Max Drawdown: {results['max_drawdown']:.2f}%")
+            self.logger.info(f"Profit Factor: {results['profit_factor']:.2f}")
+            self.logger.info(f"Average Trade Return: ${results['avg_trade_return']:.2f}")
+            self.logger.info(f"Final Capital: ${results['final_capital']:.2f}")
             
-            print("\n=== PERFORMANCE BY PATTERN ===")
+            self.logger.info("=== PERFORMANCE BY PATTERN ===")
             for pattern, metrics in results['by_pattern'].items():
-                print(f"{pattern}:")
-                print(f"  Count: {metrics['count']}")
-                print(f"  Win Rate: {metrics['win_rate']:.2%}")
-                print(f"  Avg Profit: ${metrics['avg_profit']:.2f}")
-                print(f"  Total Profit: ${metrics['total_profit']:.2f}")
+                self.logger.info(f"{pattern}:")
+                self.logger.info(f"  Count: {metrics['count']}")
+                self.logger.info(f"  Win Rate: {metrics['win_rate']:.2%}")
+                self.logger.info(f"  Avg Profit: ${metrics['avg_profit']:.2f}")
+                self.logger.info(f"  Total Profit: ${metrics['total_profit']:.2f}")
             
             # print("========================")
             
@@ -972,6 +974,46 @@ Average Trade Duration: {avg_duration} candles
             self.logger.error(f"Fatal error in live mode: {e}", exc_info=True)
         finally:
             watchdog.stop()
+
+    def run_full_history_ml(self, horizon: str = '24h',
+                            min_train_size: int = 1000,
+                            retrain_every: int = 24,
+                            start_date_str: Optional[str] = None,
+                            end_date_str: Optional[str] = None):
+        """Executa treino/avaliação walk-forward em toda série histórica disponível."""
+        start_date = None
+        end_date = None
+
+        if start_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M:%S')
+        if end_date_str:
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S')
+
+        evaluator = FullHistoryMLEvaluator(
+            api_client=self.api_client,
+            db_manager=self.db,
+            logger=self.logger
+        )
+
+        result = evaluator.run(
+            symbol=settings.SYMBOL,
+            timeframe='1h',
+            horizon=horizon,
+            start_date=start_date,
+            end_date=end_date,
+            min_train_size=min_train_size,
+            retrain_every=retrain_every
+        )
+
+        self.logger.info("=== FULL HISTORY ML RESULTS ===")
+        self.logger.info(f"Run ID: {result['run_id']}")
+        self.logger.info(f"Recipe Hash: {result['recipe_hash'][:16]}")
+        self.logger.info(f"Total Predictions: {result['total_predictions']}")
+        self.logger.info(f"Correct Predictions: {result['correct_predictions']}")
+        self.logger.info(f"Accuracy: {result['accuracy']:.2%}")
+        self.logger.info(f"Period: {result['start_timestamp']} -> {result['end_timestamp']}")
+
+        return result
     
     def _predict_direction(self, current_price: float, features: dict, sentiment: float) -> dict:
         """Prediz direção baseada em padrões e ML"""
@@ -1045,7 +1087,7 @@ Average Trade Duration: {avg_duration} candles
 
 def main():
     parser = argparse.ArgumentParser(description='Advanced Bitcoin Pattern Tracker')
-    parser.add_argument('--mode', choices=['live', 'backtest', 'report', 'paper', 'retrain'], 
+    parser.add_argument('--mode', choices=['live', 'backtest', 'report', 'paper', 'retrain', 'full-ml'], 
                        default='live', help='Execution mode')
     parser.add_argument('--duration', type=int, default=24, 
                        help='Duration in hours for live monitoring')
@@ -1066,6 +1108,13 @@ def main():
                        help='Update interval in minutes (default: 60)')
     parser.add_argument('--retrain-days', type=int, default=None,
                        help='Training window in days for retrain mode (default: RETRAIN_WINDOW_DAYS env or 30)')
+    parser.add_argument('--full-ml-horizon', type=str, default='24h',
+                       choices=['1h', '4h', '24h'],
+                       help='Prediction horizon for full history ML mode')
+    parser.add_argument('--full-ml-min-train-size', type=int, default=1000,
+                       help='Minimum train samples before first walk-forward prediction')
+    parser.add_argument('--full-ml-retrain-every', type=int, default=24,
+                       help='Retrain model every N predictions in full history ML mode')
     
     args = parser.parse_args()
     
@@ -1087,6 +1136,14 @@ def main():
             tracker.run_paper_trading(args.duration)
         elif args.mode == 'retrain':
             tracker.retrain_ml_with_collected_data(retrain_days=args.retrain_days)
+        elif args.mode == 'full-ml':
+            tracker.run_full_history_ml(
+                horizon=args.full_ml_horizon,
+                min_train_size=args.full_ml_min_train_size,
+                retrain_every=args.full_ml_retrain_every,
+                start_date_str=args.start_date,
+                end_date_str=args.end_date
+            )
     
     except KeyboardInterrupt:
         tracker.logger.info("Execution interrupted by user")

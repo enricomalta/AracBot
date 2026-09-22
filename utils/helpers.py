@@ -6,6 +6,8 @@ import logging
 from typing import Optional
 import sys
 import io
+import warnings
+import os
 
 def setup_logging(level=logging.INFO):
     """Configura logging para a aplicação com suporte a UTF-8"""
@@ -21,6 +23,49 @@ def setup_logging(level=logging.INFO):
     else:
         log_format = '%(asctime)s - %(levelname)s - %(message)s'
         date_format = '%Y-%m-%d %H:%M:%S'
+
+    sklearn_parallel_warning = (
+        r"`sklearn\.utils\.parallel\.delayed` should be used with "
+        r"`sklearn\.utils\.parallel\.Parallel`"
+    )
+
+    # Importante: joblib pode criar subprocessos; PYTHONWARNINGS garante herança do filtro.
+    existing_pythonwarnings = os.environ.get('PYTHONWARNINGS', '').strip()
+    entries = [e for e in existing_pythonwarnings.split(',') if e.strip()] if existing_pythonwarnings else []
+    entries = [e for e in entries if 'UserWarning:sklearn.utils.parallel' not in e]
+
+    if level > logging.DEBUG:
+        rule = 'ignore::UserWarning:sklearn.utils.parallel'
+    else:
+        rule = 'default::UserWarning:sklearn.utils.parallel'
+
+    os.environ['PYTHONWARNINGS'] = ','.join([rule] + entries)
+
+    # Filtro local (processo principal)
+    warnings.filterwarnings(
+        action='default',
+        category=UserWarning,
+        module=r'sklearn\.utils\.parallel',
+        append=False
+    )
+
+    # Em INFO (ou acima), ocultar UserWarning do módulo de paralelismo do sklearn.
+    if level > logging.DEBUG:
+        warnings.filterwarnings(
+            action='ignore',
+            category=UserWarning,
+            module=r'sklearn\.utils\.parallel',
+            append=False
+        )
+    else:
+        # Em DEBUG, manter visível apenas este warning específico do delayed/Parallel.
+        warnings.filterwarnings(
+            action='default',
+            message=sklearn_parallel_warning,
+            category=UserWarning,
+            module=r'sklearn\.utils\.parallel',
+            append=False
+        )
 
     logging.basicConfig(
         level=level,

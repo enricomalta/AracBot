@@ -7,6 +7,7 @@ import hmac
 import hashlib
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
+from typing import Optional
 from config.settings import settings
 from data.database import DatabaseManager
 from utils.request_helper import RobustRequestSession
@@ -133,6 +134,72 @@ class APIClient:
             return cached_data
         
         return None
+
+    def get_full_historical_data(self, symbol: str, timeframe: str,
+                                 start_date: Optional[datetime] = None,
+                                 end_date: Optional[datetime] = None,
+                                 limit_per_request: int = 1000) -> pd.DataFrame:
+        """Coleta série histórica completa via paginação da API."""
+        if start_date is None:
+            start_date = datetime(2017, 8, 17, 0, 0, 0)
+        if end_date is None:
+            end_date = datetime.now()
+
+        all_batches = []
+        current_start = pd.to_datetime(start_date)
+        end_ts = pd.to_datetime(end_date)
+
+        logger.info(
+            f"Fetching full historical data for {symbol} {timeframe} from "
+            f"{current_start} to {end_ts}"
+        )
+
+        while current_start < end_ts:
+            batch = self.fetch_klines(
+                symbol=symbol,
+                interval=timeframe,
+                limit=limit_per_request,
+                start_time=current_start.isoformat(),
+                end_time=end_ts.isoformat()
+            )
+
+            if batch is None or batch.empty:
+                logger.warning("No more data returned from API during pagination")
+                break
+
+            batch = batch.sort_values('timestamp').drop_duplicates(subset=['timestamp'])
+            all_batches.append(batch)
+
+            last_ts = pd.to_datetime(batch['timestamp'].iloc[-1])
+            if last_ts <= current_start:
+                logger.warning("Pagination stopped to avoid loop (non-increasing timestamp)")
+                break
+
+            logger.info(
+                f"Fetched batch with {len(batch)} rows "
+                f"({batch['timestamp'].iloc[0]} -> {batch['timestamp'].iloc[-1]})"
+            )
+
+            if len(batch) < limit_per_request or last_ts >= end_ts:
+                break
+
+            current_start = last_ts + timedelta(milliseconds=1)
+            time.sleep(0.05)
+
+        if not all_batches:
+            return None
+
+        full_df = pd.concat(all_batches, ignore_index=True)
+        full_df = full_df.sort_values('timestamp').drop_duplicates(subset=['timestamp'])
+
+        if not full_df.empty:
+            try:
+                self.db.save_price_data(full_df, symbol, timeframe)
+            except Exception as e:
+                logger.warning(f"Could not cache full historical dataset: {e}")
+
+        logger.info(f"Full historical dataset ready: {len(full_df)} rows")
+        return full_df
     
     def _generate_signature(self, params: dict) -> str:
         """Gera assinatura HMAC-SHA256 para requisições autenticadas"""
