@@ -112,7 +112,7 @@ class AdvancedMarketDataCollector:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT oi_current FROM open_interest 
-                WHERE symbol = ? 
+                WHERE symbol = %s
                 ORDER BY timestamp DESC 
                 LIMIT 1
             ''', (symbol,))
@@ -538,7 +538,7 @@ class AdvancedMarketDataCollector:
                 cursor.execute('''
                     INSERT INTO open_interest 
                     (timestamp, symbol, oi_current, change_percent, created_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s)
                 ''', (
                     data['timestamp'],
                     data['symbol'],
@@ -551,7 +551,7 @@ class AdvancedMarketDataCollector:
                 cursor.execute('''
                     INSERT INTO funding_rates 
                     (timestamp, symbol, funding_rate, created_at)
-                    VALUES (?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s)
                 ''', (
                     data['timestamp'],
                     data['symbol'],
@@ -563,7 +563,7 @@ class AdvancedMarketDataCollector:
                 cursor.execute('''
                     INSERT INTO implied_volatility 
                     (timestamp, symbol, volatility, source, created_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s)
                 ''', (
                     data['timestamp'],
                     data.get('symbol', 'BTCUSDT'),
@@ -576,7 +576,7 @@ class AdvancedMarketDataCollector:
                 cursor.execute('''
                     INSERT INTO market_dominance 
                     (timestamp, btc_dominance, eth_dominance, altcoin_dominance, created_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s)
                 ''', (
                     data['timestamp'],
                     data.get('btc_dominance'),
@@ -590,7 +590,7 @@ class AdvancedMarketDataCollector:
                     INSERT INTO order_book_snapshot 
                     (timestamp, symbol, bid_price, bid_size, ask_price, ask_size, 
                      bid_ask_ratio, total_bid_volume, total_ask_volume, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ''', (
                     data['timestamp'],
                     data['symbol'],
@@ -608,7 +608,7 @@ class AdvancedMarketDataCollector:
                 cursor.execute('''
                     INSERT INTO macro_correlations 
                     (timestamp, gold_close, sp500_close, dxy_close, vix_close, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                 ''', (
                     data['timestamp'],
                     data.get('gold'),

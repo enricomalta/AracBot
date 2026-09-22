@@ -10,12 +10,16 @@ class Settings:
     # Base do projeto (diretório pai de config/)
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Database
-    DB_PATH = os.getenv('DB_PATH', os.path.join(BASE_DIR, 'bitcoin_patterns.db'))
+    # Database: Supabase Postgres. Local SQLite is intentionally not used by
+    # the serverless runtime because its filesystem is ephemeral.
+    DATABASE_URL = os.getenv('DATABASE_URL', '')
+    SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
+    SUPABASE_ANON_KEY = os.getenv('SUPABASE_ANON_KEY', '')
     
     # API
     BINANCE_API_URL = "https://api.binance.com/api/v3/klines"
     BINANCE_TRADE_URL = "https://api.binance.com/api/v3"
+    BINANCE_DEMO_TRADE_URL = "https://testnet.binance.vision/api/v3"
     SYMBOL = "BTCUSDT"
     TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h']
     
@@ -23,6 +27,19 @@ class Settings:
     API_KEY = os.getenv('BINANCE_API_KEY', '')
     API_SECRET = os.getenv('BINANCE_API_SECRET', '')
     USE_DEMO = os.getenv('USE_BINANCE_DEMO', 'true').lower() == 'true'  # Use demo account by default
+    ENABLE_LIVE_TRADING = os.getenv('ENABLE_LIVE_TRADING', 'false').lower() == 'true'
+
+    # Serverless orchestration and security
+    PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', '').rstrip('/')
+    CRON_TRIGGER_SECRET = os.getenv('CRON_TRIGGER_SECRET', '')
+    QSTASH_TOKEN = os.getenv('QSTASH_TOKEN', '')
+    QSTASH_URL = os.getenv('QSTASH_URL', 'https://qstash.upstash.io').rstrip('/')
+    QSTASH_CURRENT_SIGNING_KEY = os.getenv('QSTASH_CURRENT_SIGNING_KEY', '')
+    QSTASH_NEXT_SIGNING_KEY = os.getenv('QSTASH_NEXT_SIGNING_KEY', '')
+    AUTH_COOKIE_NAME = os.getenv('AUTH_COOKIE_NAME', 'sb-access-token')
+    CSRF_COOKIE_NAME = os.getenv('CSRF_COOKIE_NAME', 'csrf_token')
+    ALERT_WEBHOOK_URL = os.getenv('ALERT_WEBHOOK_URL', '')
+    SENTRY_DSN = os.getenv('SENTRY_DSN', '')
     
     # Sentiment Analysis (KILL SWITCH)
     SENTIMENT_ENABLED = os.getenv('SENTIMENT_ENABLED', 'true').lower() == 'true'

@@ -316,23 +316,17 @@ class AdvancedFeatureEngineer:
                     ob.spread_percent,
                     ns.score as sentiment_score
                 FROM price_history p
-                LEFT JOIN open_interest oi ON oi.timestamp >= datetime(p.timestamp, '-1 hour')
-                    AND oi.timestamp <= datetime(p.timestamp, '+1 hour')
-                LEFT JOIN funding_rates fr ON fr.timestamp >= datetime(p.timestamp, '-4 hours')
-                    AND fr.timestamp <= datetime(p.timestamp, '+4 hours')
-                LEFT JOIN implied_volatility iv ON iv.timestamp >= datetime(p.timestamp, '-4 hours')
-                    AND iv.timestamp <= datetime(p.timestamp, '+4 hours')
-                LEFT JOIN market_dominance md ON md.timestamp >= datetime(p.timestamp, '-1 hour')
-                    AND md.timestamp <= datetime(p.timestamp, '+1 hour')
-                LEFT JOIN order_book_snapshot ob ON ob.timestamp >= datetime(p.timestamp, '-10 minutes')
-                    AND ob.timestamp <= datetime(p.timestamp, '+10 minutes')
-                LEFT JOIN news_sentiment ns ON ns.timestamp >= datetime(p.timestamp, '-24 hours')
-                    AND ns.timestamp <= datetime(p.timestamp, '+24 hours')
-                WHERE p.timestamp > datetime('now', ? || ' days')
+                LEFT JOIN open_interest oi ON oi.timestamp BETWEEN p.timestamp - interval '1 hour' AND p.timestamp + interval '1 hour'
+                LEFT JOIN funding_rates fr ON fr.timestamp BETWEEN p.timestamp - interval '4 hours' AND p.timestamp + interval '4 hours'
+                LEFT JOIN implied_volatility iv ON iv.timestamp BETWEEN p.timestamp - interval '4 hours' AND p.timestamp + interval '4 hours'
+                LEFT JOIN market_dominance md ON md.timestamp BETWEEN p.timestamp - interval '1 hour' AND p.timestamp + interval '1 hour'
+                LEFT JOIN order_book_snapshot ob ON ob.timestamp BETWEEN p.timestamp - interval '10 minutes' AND p.timestamp + interval '10 minutes'
+                LEFT JOIN news_sentiment ns ON ns.timestamp BETWEEN p.timestamp - interval '24 hours' AND p.timestamp + interval '24 hours'
+                WHERE p.timestamp > now() + (%s * interval '1 day')
                 ORDER BY p.timestamp DESC
             '''
             
-            df = pd.read_sql_query(query, conn, params=[f'-{days_back}'])
+            df = pd.read_sql_query(query, conn, params=[-days_back])
             conn.close()
             
             logger.info(f"Loaded {len(df)} historical feature records")

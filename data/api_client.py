@@ -231,7 +231,8 @@ class APIClient:
             'X-MBX-APIKEY': settings.API_KEY
         }
         
-        url = f"{settings.BINANCE_TRADE_URL}{endpoint}"
+        trade_base_url = settings.BINANCE_DEMO_TRADE_URL if settings.USE_DEMO else settings.BINANCE_TRADE_URL
+        url = f"{trade_base_url}{endpoint}"
         
         try:
             if method.upper() == 'GET':
@@ -268,6 +269,10 @@ class APIClient:
             params['stopPrice'] = stop_price
         
         return self._make_authenticated_request('POST', '/order', params)
+
+    def place_market_order(self, symbol: str, side: str, quantity: float) -> dict:
+        """Places an immediate order; used only after explicit approval or exit rules."""
+        return self.place_order(symbol, side, 'MARKET', quantity)
     
     def get_open_orders(self, symbol: str = None) -> list:
         """Obtém ordens abertas"""

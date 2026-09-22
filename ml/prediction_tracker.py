@@ -76,7 +76,8 @@ class PredictionTracker:
                 (timestamp, timeframe, prediction_type, predicted_direction, target_price,
                  confidence, model_type, features_used, sentiment_score, oi_ratio, 
                  funding_rate, additional_context, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s)
+                RETURNING id
             ''', (
                 timestamp,
                 timeframe,
@@ -94,7 +95,7 @@ class PredictionTracker:
             ))
             
             conn.commit()
-            prediction_id = cursor.lastrowid
+            prediction_id = cursor.fetchone()[0]
             conn.close()
             
             logger.info(f"Prediction #{prediction_id} created: {predicted_direction} "
@@ -128,7 +129,7 @@ class PredictionTracker:
             cursor = conn.cursor()
             
             # Buscar previsão
-            cursor.execute('SELECT * FROM predictions WHERE id = ?', (prediction_id,))
+            cursor.execute('SELECT * FROM predictions WHERE id = %s', (prediction_id,))
             pred_row = cursor.fetchone()
             
             if not pred_row:
@@ -151,9 +152,9 @@ class PredictionTracker:
             
             cursor.execute('''
                 UPDATE predictions 
-                SET actual_direction = ?, actual_price = ?, was_correct = ?, 
-                    profit_loss = ?, error_percent = ?, resolved_at = ?
-                WHERE id = ?
+                SET actual_direction = %s, actual_price = %s, was_correct = %s,
+                    profit_loss = %s, error_percent = %s, resolved_at = %s
+                WHERE id = %s
             ''', (
                 actual_direction,
                 actual_price,
@@ -216,11 +217,11 @@ class PredictionTracker:
                 FROM predictions 
                 WHERE was_correct IS NULL
                 AND (
-                    (timeframe = '1h' AND created_at < datetime('now', '-1 hours'))
-                    OR (timeframe = '4h' AND created_at < datetime('now', '-4 hours'))
-                    OR (timeframe = '24h' AND created_at < datetime('now', '-24 hours'))
+                    (timeframe = '1h' AND created_at < now() - interval '1 hour')
+                    OR (timeframe = '4h' AND created_at < now() - interval '4 hours')
+                    OR (timeframe = '24h' AND created_at < now() - interval '24 hours')
                 )
-                LIMIT ?
+                LIMIT %s
             ''', (limit,))
             
             columns = [description[0] for description in cursor.description]
@@ -261,28 +262,28 @@ class PredictionTracker:
             query = '''
                 SELECT 
                     COUNT(*) as total,
-                    SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct,
+                    SUM(CASE WHEN was_correct IS TRUE THEN 1 ELSE 0 END) as correct,
                     AVG(confidence) as avg_confidence,
                     AVG(profit_loss) as avg_profit_loss,
                     MIN(profit_loss) as min_profit_loss,
                     MAX(profit_loss) as max_profit_loss
                 FROM predictions
                 WHERE was_correct IS NOT NULL
-                AND created_at > datetime('now', ? || ' hours')
+                AND created_at > now() + (%s * interval '1 hour')
             '''
             
-            params = [f'-{hours_back}']
+            params = [-hours_back]
             
             if model_type:
-                query += ' AND model_type = ?'
+                query += ' AND model_type = %s'
                 params.append(model_type)
             
             if prediction_type:
-                query += ' AND prediction_type = ?'
+                query += ' AND prediction_type = %s'
                 params.append(prediction_type)
             
             if timeframe:
-                query += ' AND timeframe = ?'
+                query += ' AND timeframe = %s'
                 params.append(timeframe)
             
             cursor.execute(query, params)
@@ -345,14 +346,14 @@ class PredictionTracker:
                 SELECT 
                     model_type,
                     COUNT(*) as total,
-                    SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct,
+                    SUM(CASE WHEN was_correct IS TRUE THEN 1 ELSE 0 END) as correct,
                     AVG(confidence) as avg_confidence,
                     AVG(profit_loss) as avg_profit_loss
                 FROM predictions
                 WHERE was_correct IS NOT NULL
                 GROUP BY model_type
                 ORDER BY (CAST(correct AS FLOAT) / CAST(total AS FLOAT)) DESC
-                LIMIT ?
+                LIMIT %s
             ''', (limit,))
             
             columns = [description[0] for description in cursor.description]

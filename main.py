@@ -1,6 +1,7 @@
 # main.py
 import logging
 import argparse
+import math
 from datetime import datetime, timedelta
 import time
 import pandas as pd
@@ -12,16 +13,11 @@ from data.api_client import APIClient
 from patterns import PatternRecognitionBot
 from ml.validator import PatternMLValidator
 from risk.risk_manager import RiskManager
-from analysis.multi_timeframe import MultiTimeframeAnalyzer
-from analysis.backtester import Backtester
-from analysis.performance import PerformanceAnalyzer
-from analysis.full_history_ml import FullHistoryMLEvaluator
 from utils.helpers import setup_logging
 from utils.watchdog import BotWatchdog, InactivityDetector
 from news.news_sentiment_manager import NewsSentimentManager
 from data.market_data_collector import AdvancedMarketDataCollector
 from ml.prediction_tracker import PredictionTracker
-from ml.advanced_features import AdvancedFeatureEngineer
 from ml.feature_engineering import FeatureEngineer
 
 class AdvancedBitcoinPatternTracker:
@@ -37,8 +33,6 @@ class AdvancedBitcoinPatternTracker:
         self.pattern_bot = PatternRecognitionBot()
         self.ml_validator = PatternMLValidator()
         self.risk_manager = RiskManager()
-        self.multi_tf_analyzer = MultiTimeframeAnalyzer(api_client=self.api_client)  # Passar api_client
-        self.performance_analyzer = PerformanceAnalyzer(self.db)
         
         # Sentiment Analysis (with kill switch)
         if settings.SENTIMENT_ENABLED:
@@ -55,8 +49,6 @@ class AdvancedBitcoinPatternTracker:
         self.prediction_tracker = PredictionTracker(self.db)
         self.logger.info("Prediction tracker initialized")
         
-        self.feature_engineer = AdvancedFeatureEngineer(self.db)
-        self.logger.info("Advanced feature engineer initialized")
         
         # Trading state
         self.active_positions = []  # Lista de posições abertas
@@ -66,15 +58,135 @@ class AdvancedBitcoinPatternTracker:
         self._load_ml_models()
     
     def _load_ml_models(self):
-        """Carrega modelos ML ou treina novos se necessário"""
+        """Loads the immutable model bundle; Functions must never write models."""
         if not self.ml_validator.load_models():
-            self.logger.info("Training new ML models...")
-            historical_data = self.api_client.fetch_klines(
-                settings.SYMBOL, '1h', limit=1000
-            )
-            if historical_data is not None:
-                self.ml_validator.train_models(historical_data)
-                self.ml_validator.save_models()
+            self.logger.warning("ML bundle unavailable; continuing with rule-based analysis.")
+
+    def run_serverless_cycle(self) -> dict:
+        """Runs one bounded hourly analysis. It contains no sleep or infinite loop."""
+        now = datetime.utcnow()
+        result = {"started_at": now.isoformat(), "price": None, "suggestions": [], "sales": [], "prediction_id": None}
+
+        current_klines = self.api_client.fetch_klines(settings.SYMBOL, '1m', limit=1)
+        if current_klines is None or current_klines.empty:
+            raise RuntimeError("Binance did not return a current candle")
+        current_price = float(current_klines["close"].iloc[-1])
+        result["price"] = current_price
+
+        # Persisted positions replace the old in-memory active_positions list.
+        result["sales"] = self._close_persisted_positions(current_price)
+
+        market_data = self.market_collector.save_all_market_data(settings.SYMBOL)
+        sources = market_data.get("sources", {})
+        oi_ratio = (sources.get("open_interest") or {}).get("oi_current", 1.0)
+        funding_rate = (sources.get("funding_rate") or {}).get("funding_rate", 0.0)
+        sentiment_score = 0.0
+        if self.sentiment_manager:
+            try:
+                sentiment_score = self.sentiment_manager.get_current_market_sentiment(hours=24, max_news=20).get("score", 0.0)
+            except Exception as exc:
+                self.logger.warning("Sentiment collection failed: %s", exc)
+
+        historical = self.api_client.fetch_klines(settings.SYMBOL, "1h", limit=100)
+        if historical is None or len(historical) < 50:
+            raise RuntimeError("Insufficient hourly candles for analysis")
+        self.db.save_price_data(historical, settings.SYMBOL, "1h")
+
+        features: dict = {}
+        feature_df = FeatureEngineer().create_technical_features(historical)
+        if not feature_df.empty:
+            row = feature_df.iloc[-1]
+            def finite_feature(key):
+                value = row.get(key, 0)
+                return float(value) if pd.notna(value) and math.isfinite(float(value)) else 0.0
+
+            features = {key: finite_feature(key) for key in (
+                "rsi_14", "rsi_21", "macd", "macd_hist", "bb_position", "atr", "adx", "obv",
+                "volatility_10", "volume_ratio", "returns_5", "returns_10"
+            )}
+            features.update({"sentiment_score": sentiment_score, "oi_ratio": oi_ratio, "funding_rate": funding_rate})
+
+        signals = self.pattern_bot.analyze_market(historical.tail(24)) or []
+        candle_timestamp = historical.iloc[-1]["timestamp"]
+        for signal in signals:
+            confidence = float(signal.get("confidence", 0))
+            pattern = signal.get("pattern", "unknown")
+            signal_type = signal.get("signal", "unknown").lower()
+            self.db.save_signal_for_analysis({"timestamp": now, "pattern": pattern, "confidence": confidence,
+                                              "signal": signal_type, "price": current_price,
+                                              "market_data": historical.tail(10).to_dict()})
+            # No signal is allowed to buy by itself. A buy becomes a durable human-review suggestion.
+            if signal_type != "buy" or confidence < settings.MIN_CONFIDENCE:
+                continue
+            position_size = self.risk_manager.calculate_position_size(confidence, 0.02, pattern)
+            if position_size <= 0:
+                continue
+            entry_price = current_price
+            quantity = round(position_size / entry_price, 6)
+            if quantity <= 0:
+                continue
+            suggestion = {"dedupe_key": f"{settings.SYMBOL}:{pattern}:buy:{candle_timestamp}", "symbol": settings.SYMBOL,
+                          "pattern": pattern, "confidence": confidence, "entry_price": entry_price,
+                          "position_size": position_size, "quantity": quantity,
+                          "stop_loss": self.risk_manager.calculate_stop_loss(entry_price, "buy", 0.02),
+                          "take_profit": self.risk_manager.calculate_take_profit(entry_price, "buy", pattern),
+                          "context": {"signal": signal, "features": features, "sentiment_score": sentiment_score,
+                                      "oi_ratio": oi_ratio, "funding_rate": funding_rate}}
+            suggestion_id = self.db.create_purchase_suggestion(suggestion)
+            if suggestion_id:
+                suggestion["id"] = suggestion_id
+                self._notify_webhook("purchase_suggestion", suggestion)
+                result["suggestions"].append(suggestion)
+
+        prediction = self._predict_direction(current_price, features, sentiment_score)
+        if features:
+            result["prediction_id"] = self.prediction_tracker.create_prediction(
+                timeframe="24h", prediction_type="direction", predicted_direction=prediction["direction"],
+                target_price=prediction["target_price"], confidence=prediction["confidence"], model_type="ensemble",
+                features_dict=features, sentiment_score=sentiment_score, oi_ratio=oi_ratio, funding_rate=funding_rate)
+        result["completed_at"] = datetime.utcnow().isoformat()
+        return result
+
+    def _close_persisted_positions(self, current_price: float) -> list[dict]:
+        sales = []
+        for position in self.db.get_open_positions():
+            reason = "stop_loss" if current_price <= position["stop_loss"] else ("take_profit" if current_price >= position["take_profit"] else None)
+            if not reason:
+                continue
+            if not settings.ENABLE_LIVE_TRADING:
+                self.logger.warning("Exit for position %s detected but live trading is disabled", position["id"])
+                continue
+            claimed = self.db.claim_position_for_exit(position["id"])
+            if not claimed:
+                continue
+            try:
+                order = self.api_client.place_market_order(claimed["symbol"], "SELL", float(claimed["quantity"]))
+                if not order or "orderId" not in order:
+                    raise RuntimeError(f"Automatic sale failed for position {claimed['id']}")
+                closed = self.db.close_position(claimed["id"], current_price, str(order["orderId"]), reason)
+            except Exception:
+                self.db.release_position_exit(claimed["id"])
+                raise
+            if closed:
+                self.db.save_trade_result({"timestamp": claimed["created_at"], "pattern": claimed["pattern"], "signal_type": "buy",
+                    "entry_price": claimed["entry_price"], "position_size": claimed["position_size"], "profit": closed["profit_loss"],
+                    "result": "win" if closed["profit_loss"] > 0 else "loss", "exit_reason": reason})
+                self._notify_webhook("sale", closed)
+                sales.append(closed)
+        return sales
+
+    def _notify_webhook(self, event: str, data: dict) -> None:
+        if not settings.ALERT_WEBHOOK_URL:
+            return
+        import requests
+        if event == "purchase_suggestion":
+            content = f"🟢 SUGESTÃO DE COMPRA #{data['id']}: {data['quantity']:.6f} {data['symbol']} @ ${data['entry_price']:,.2f} | stop ${data['stop_loss']:,.2f} | alvo ${data['take_profit']:,.2f}"
+        else:
+            content = f"🔴 VENDA AUTOMÁTICA #{data['id']}: {data['quantity']:.6f} {data['symbol']} @ ${data['exit_price']:,.2f} | P&L ${data['profit_loss']:,.2f} | {data['exit_reason']}"
+        try:
+            requests.post(settings.ALERT_WEBHOOK_URL, json={"event": event, "content": content, "data": data}, timeout=10).raise_for_status()
+        except Exception as exc:
+            self.logger.error("Webhook notification failed: %s", exc)
     
     def run_paper_trading(self, duration_hours: int = 1):
         """Executa paper trading (simulação) realista com dados históricos"""
@@ -365,6 +477,10 @@ Average Trade Duration: {avg_duration} candles
         self.logger.info("ML retraining completed (placeholder)")
     
     def run_live_monitoring(self, duration_hours: int = 24):
+        """Deprecated compatibility wrapper: daemon monitoring was removed."""
+        self.logger.warning("Continuous monitoring was removed; running one serverless cycle instead.")
+        return self.run_serverless_cycle()
+
         """Executa monitoramento ao vivo do mercado"""
         self.logger.info(f"Starting live monitoring for {duration_hours} hours...")
         
@@ -560,6 +676,7 @@ Average Trade Duration: {avg_duration} candles
         self.logger.info(f"Fetched {len(historical_data) if historical_data is not None else 0} data points")
         
         if historical_data is not None:
+            from analysis.backtester import Backtester
             backtester = Backtester(db_manager=self.db)
             results = backtester.run_backtest(historical_data)
             
@@ -597,13 +714,21 @@ Average Trade Duration: {avg_duration} candles
     
     def show_performance_report(self):
         """Mostra relatório de performance"""
-        report = self.performance_analyzer.generate_performance_report()
+        from analysis.performance import PerformanceAnalyzer
+        performance_analyzer = PerformanceAnalyzer(self.db)
+        report = performance_analyzer.generate_performance_report()
         print(report)
         
         # Generate charts
-        self.performance_analyzer.plot_performance_charts()
+        performance_analyzer.plot_performance_charts()
     
     def _execute_live_trade(self, signal: dict, current_price: float, confidence: float):
+        """Legacy hook deliberately disabled: signals may never place a buy."""
+        self.logger.warning(
+            "Direct order from signal blocked. Create a trade_suggestion and use /api/approve-purchase instead."
+        )
+        return
+
         """Executa um trade ao vivo baseado no sinal"""
         try:
             # Calcular tamanho da posição
@@ -732,6 +857,10 @@ Average Trade Duration: {avg_duration} candles
 
     def run_live_with_predictions(self, collect_days: int = 30, prediction_horizon: str = '24h', 
                                   update_interval: int = 60):
+        """Deprecated compatibility wrapper: Vercel executes one cycle per job."""
+        self.logger.warning("Continuous prediction loop was removed; running one serverless cycle instead.")
+        return self.run_serverless_cycle()
+
         """Executa modo LIVE com geração de previsões estruturadas"""
         self.logger.info(f"[LIVE] Starting LIVE MODE with Predictions")
         self.logger.info(f"Collection days: {collect_days}")
@@ -989,6 +1118,7 @@ Average Trade Duration: {avg_duration} candles
         if end_date_str:
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S')
 
+        from analysis.full_history_ml import FullHistoryMLEvaluator
         evaluator = FullHistoryMLEvaluator(
             api_client=self.api_client,
             db_manager=self.db,
@@ -1089,8 +1219,8 @@ def main():
     parser = argparse.ArgumentParser(description='Advanced Bitcoin Pattern Tracker')
     parser.add_argument('--mode', choices=['live', 'backtest', 'report', 'paper', 'retrain', 'full-ml'], 
                        default='live', help='Execution mode')
-    parser.add_argument('--duration', type=int, default=24, 
-                       help='Duration in hours for live monitoring')
+    parser.add_argument('--duration', type=int, default=24,
+                       help='Kept for paper-trading compatibility')
     parser.add_argument('--backtest-days', type=int, default=30,
                        help='Number of days for backtest')
     parser.add_argument('--start-date', type=str, 
@@ -1122,12 +1252,8 @@ def main():
     
     try:
         if args.mode == 'live':
-            # Novo modo: Live com previsões
-            tracker.run_live_with_predictions(
-                collect_days=args.collect_days,
-                prediction_horizon=args.prediction_horizon,
-                update_interval=args.update_interval
-            )
+            # Serverless local smoke test: one bounded cycle, never a daemon.
+            tracker.run_serverless_cycle()
         elif args.mode == 'backtest':
             tracker.run_backtest(args.backtest_days, args.start_date, args.end_date)
         elif args.mode == 'report':
