@@ -10,14 +10,22 @@ class Settings:
     # Base do projeto (diretório pai de config/)
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Database: Supabase Postgres. Local SQLite is intentionally not used by
-    # the serverless runtime because its filesystem is ephemeral.
+    # Database: Supabase Postgres for both local training and Vercel Functions.
+    # The legacy SQLite file is used only by scripts/migrate_sqlite_to_supabase.py.
     DATABASE_URL = os.getenv('DATABASE_URL', '')
     SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
     SUPABASE_ANON_KEY = os.getenv('SUPABASE_ANON_KEY', '')
     
     # API
-    BINANCE_API_URL = "https://api.binance.com/api/v3/klines"
+    # The primary host can be blocked by an ISP, corporate proxy, or regional
+    # network. Public market-data hosts are tried in this order.
+    BINANCE_API_URL = os.getenv('BINANCE_API_URL', "https://api.binance.com/api/v3/klines")
+    BINANCE_API_FALLBACK_URLS = [
+        url.strip() for url in os.getenv(
+            'BINANCE_API_FALLBACK_URLS',
+            'https://data-api.binance.vision/api/v3/klines,https://api.binance.us/api/v3/klines'
+        ).split(',') if url.strip()
+    ]
     BINANCE_TRADE_URL = "https://api.binance.com/api/v3"
     BINANCE_DEMO_TRADE_URL = "https://testnet.binance.vision/api/v3"
     SYMBOL = "BTCUSDT"
@@ -64,6 +72,7 @@ class Settings:
     # ML Settings
     ML_MODEL_PATH = "ml_models.pkl"
     ML_SCALER_PATH = "ml_scalers.pkl"
+    MODEL_VERSIONS_DIR = os.path.join(BASE_DIR, "models", "versions")
     RETRAIN_WINDOW_DAYS = int(os.getenv('RETRAIN_WINDOW_DAYS', '30'))
     
     # Backtesting

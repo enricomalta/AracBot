@@ -1,0 +1,2 @@
+# Local rollback artifacts; only the active root-level ml_*.pkl files are deployed.
+models/versions/

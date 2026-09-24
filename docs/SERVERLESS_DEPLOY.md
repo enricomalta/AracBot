@@ -6,8 +6,8 @@ Isso é intencionalmente diferente de criar uma thread após devolver HTTP: a Ve
 
 ## Provisionamento
 
-1. Crie um projeto Supabase e aplique [0001_serverless_bot.sql](../supabase/migrations/0001_serverless_bot.sql), por `supabase db push` ou pelo SQL Editor.
-2. Copie a URL **Transaction pooler** (porta 6543) em `DATABASE_URL`, incluindo `sslmode=require`.
+1. Crie um projeto Supabase e aplique [0001_serverless_bot.sql](../supabase/migrations/0001_serverless_bot.sql) e [0002_model_training_runs.sql](../supabase/migrations/0002_model_training_runs.sql), por `supabase db push` ou pelo SQL Editor.
+2. Copie a URL **Transaction pooler** (porta 6543) em `DATABASE_URL`, incluindo `sslmode=require`. Use a mesma variável no ambiente local e na Vercel: treinos locais e monitoramento serverless usam o mesmo banco Supabase. Não use a URL direta `db.<project-ref>.supabase.co`: ela requer IPv6 e pode resultar em `getaddrinfo failed` em redes IPv4.
 3. Opcionalmente migre o histórico antes de remover o arquivo local:
 
    ```powershell
@@ -36,6 +36,18 @@ fetch('/api/approve-purchase', {
 ```
 
 A API valida a sessão diretamente no Supabase, compara cookie/header CSRF em tempo constante e reserva a sugestão atomicamente antes de enviar a ordem. `ENABLE_LIVE_TRADING` começa como `false`; só altere para `true` depois de testar as credenciais e regras de mercado da Binance. Com `USE_BINANCE_DEMO=true`, as ordens usam o endpoint Spot Testnet; use credenciais criadas especificamente nele. As posições aprovadas ficam em `positions`; a cada análise horária o algoritmo executa venda automática quando preço atingir stop-loss ou take-profit e envia o webhook com preço e P&L. Antes da venda a posição é reservada como `closing`, impedindo ordens duplicadas por retry; se a Vercel cair depois de a exchange aceitar a ordem, revise essa posição no painel da exchange antes de liberá-la manualmente.
+
+## Treino local e monitoramento serverless
+
+O comando local `python main.py --mode live` executa **um** ciclo de monitoramento, exatamente como o worker da Vercel, e não treina modelos. Para o treino diário, execute:
+
+```powershell
+python scripts/training_console.py
+```
+
+O console oferece treino por janela de dias, histórico dos últimos treinos no Supabase e deploy opcional. O treino usa candles `BTCUSDT 1h` armazenados/buscados pelo Supabase, grava métricas, período, hashes e data em `model_training_runs`, e só substitui os arquivos ativos depois de validar os dois artefatos. Mantém localmente três versões anteriores em `models/versions/`; essa pasta não entra em Git nem no bundle Vercel.
+
+Os arquivos ativos `ml_models.pkl` e `ml_scalers.pkl` continuam na raiz e são os únicos modelos enviados no deploy. Ao confirmar deploy no console, ele executa `npx vercel --prod --yes`; é preciso que o CLI esteja autenticado e o projeto Vercel esteja vinculado. Vercel também mantém o histórico de deployments para rollback.
 
 ## Segurança de dados
 

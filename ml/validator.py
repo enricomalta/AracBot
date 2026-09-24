@@ -83,15 +83,21 @@ class PatternMLValidator:
         
         return X, y
     
-    def train_models(self, historical_data: pd.DataFrame):
-        """Treina modelos ML para diferentes tipos de padrão"""
+    def train_models(self, historical_data: pd.DataFrame) -> Dict[str, Dict]:
+        """Treina modelos ML e retorna métricas para auditoria do treino."""
         features_df = self.create_ml_features(historical_data)
+        training_summary: Dict[str, Dict] = {}
         
         for pattern_type in ['reversal', 'continuation']:
             X, y = self.prepare_ml_data(features_df, pattern_type)
             
             if len(np.unique(y)) < 2:
                 logger.warning(f"Not enough classes for {pattern_type} model")
+                training_summary[pattern_type] = {
+                    'trained': False,
+                    'reason': 'not_enough_target_classes',
+                    'samples': int(len(y)),
+                }
                 continue
                 
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -107,8 +113,9 @@ class PatternMLValidator:
                 'gradient_boosting': GradientBoostingClassifier(n_estimators=100, random_state=42),
             }
             
-            best_score = 0
+            best_score = -1.0
             best_model = None
+            best_model_name = None
             
             for name, model in models.items():
                 model.fit(X_train_scaled, y_train)
@@ -117,6 +124,7 @@ class PatternMLValidator:
                 if score > best_score:
                     best_score = score
                     best_model = model
+                    best_model_name = name
             
             self.models[pattern_type] = best_model
             self.scalers[pattern_type] = scaler
@@ -128,6 +136,18 @@ class PatternMLValidator:
                 self.feature_importance[pattern_type] = dict(zip(feature_names, best_model.feature_importances_))
             
             logger.info(f"Model {pattern_type} trained - Accuracy: {best_score:.3f}")
+            training_summary[pattern_type] = {
+                'trained': True,
+                'samples': int(len(y)),
+                'train_samples': int(len(X_train)),
+                'test_samples': int(len(X_test)),
+                'accuracy': float(best_score),
+                'model': best_model_name,
+            }
+
+        if not self.models:
+            raise ValueError("No ML model was trained; historical data is insufficient or has one target class.")
+        return training_summary
     
     def validate_pattern_with_ml(self, current_data: pd.DataFrame, pattern_type: str, pattern_confidence: float) -> float:
         """Usa ML para validar e ajustar a confiança do padrão"""
@@ -159,11 +179,11 @@ class PatternMLValidator:
             logger.error(f"ML validation error: {e}")
             return pattern_confidence
     
-    def save_models(self):
+    def save_models(self, model_path: str = None, scaler_path: str = None):
         """Salva modelos treinados"""
         try:
-            joblib.dump(self.models, settings.ML_MODEL_PATH)
-            joblib.dump(self.scalers, settings.ML_SCALER_PATH)
+            joblib.dump(self.models, model_path or settings.ML_MODEL_PATH)
+            joblib.dump(self.scalers, scaler_path or settings.ML_SCALER_PATH)
             logger.info("ML models saved successfully")
         except Exception as e:
             logger.error(f"Error saving ML models: {e}")

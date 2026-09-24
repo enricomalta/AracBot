@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 class APIClient:
     def __init__(self, db_manager):
         self.base_url = settings.BINANCE_API_URL
+        self.market_data_urls = list(dict.fromkeys([self.base_url, *settings.BINANCE_API_FALLBACK_URLS]))
         self.db = db_manager
         # Usar session robusta com retry automático
         self.session = RobustRequestSession(max_retries=3, timeout=10, thread_timeout=15)
@@ -38,16 +39,20 @@ class APIClient:
             if end_time:
                 params['endTime'] = self._parse_timestamp(end_time)
             
-            # Usar session robusta com retry e timeout
-            response = self.session.get_with_timeout(self.base_url, params=params, timeout=10)
-            
-            if response is None:
-                logger.error(f"Failed to fetch klines for {symbol} after retries")
-                return None
-            
-            data = response.json()
-            df = self._parse_klines_data(data)
-            return df
+            # A network/provider can block one Binance hostname while allowing
+            # another official public market-data endpoint. Do not use these
+            # fallbacks for authenticated trading requests.
+            for url in self.market_data_urls:
+                response = self.session.get_with_timeout(url, params=params, timeout=10)
+                if response is None:
+                    logger.warning("Market-data endpoint unavailable: %s", url)
+                    continue
+                data = response.json()
+                df = self._parse_klines_data(data)
+                logger.debug("Fetched %s candles from %s", len(df), url)
+                return df
+            logger.error("All Binance market-data endpoints failed for %s: %s", symbol, self.market_data_urls)
+            return None
             
         except Exception as e:
             logger.error(f"Error fetching klines for {symbol}: {e}")

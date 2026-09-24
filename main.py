@@ -2,7 +2,7 @@
 import logging
 import argparse
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import pandas as pd
 from typing import Optional
@@ -64,7 +64,7 @@ class AdvancedBitcoinPatternTracker:
 
     def run_serverless_cycle(self) -> dict:
         """Runs one bounded hourly analysis. It contains no sleep or infinite loop."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         result = {"started_at": now.isoformat(), "price": None, "suggestions": [], "sales": [], "prediction_id": None}
 
         current_klines = self.api_client.fetch_klines(settings.SYMBOL, '1m', limit=1)
@@ -144,7 +144,7 @@ class AdvancedBitcoinPatternTracker:
                 timeframe="24h", prediction_type="direction", predicted_direction=prediction["direction"],
                 target_price=prediction["target_price"], confidence=prediction["confidence"], model_type="ensemble",
                 features_dict=features, sentiment_score=sentiment_score, oi_ratio=oi_ratio, funding_rate=funding_rate)
-        result["completed_at"] = datetime.utcnow().isoformat()
+        result["completed_at"] = datetime.now(timezone.utc).isoformat()
         return result
 
     def _close_persisted_positions(self, current_price: float) -> list[dict]:
@@ -1274,7 +1274,7 @@ def main():
     except KeyboardInterrupt:
         tracker.logger.info("Execution interrupted by user")
     except Exception as e:
-        tracker.logger.error(f"Execution failed: {e}")
+        tracker.logger.error("Execution failed: %s", e, exc_info=True)
 
 if __name__ == "__main__":
     main()
